@@ -5,6 +5,7 @@ import CompilerPanel from '@/components/CompilerPanel';
 import TerminalComponent from '@/components/Terminal';
 import CodeEditor from '@/components/CodeEditor';
 import ResizablePanel from '@/components/ResizablePanel';
+import BasicTerminal from '@/components/BasicTerminal';
 
 export default function Index() {
   return (
@@ -34,7 +35,7 @@ export default function Index() {
             persistKey="terminalHeight"
             className="border-t border-ide-panel-border"
           >
-            <TerminalComponent />
+            <BasicTerminal />
           </ResizablePanel>
         </div>
 

@@ -1155,4 +1155,104 @@
     background: hsl(var(--md-info) / 0.1);
     color: hsl(var(--md-info));
   }
+
+  /* Universal File Access Styles */
+  .universal-file-access {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+
+  .file-node {
+    transition: all 0.2s ease-in-out;
+  }
+
+  .file-node:hover {
+    background-color: hsl(var(--accent) / 0.1);
+  }
+
+  .file-node .file-node-content {
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin: 1px 0;
+  }
+
+  .file-node .file-node-content:hover {
+    background-color: hsl(var(--accent) / 0.1);
+    color: hsl(var(--accent-foreground));
+  }
+
+  .file-node .file-node-content.selected {
+    background-color: hsl(var(--primary) / 0.1);
+    color: hsl(var(--primary));
+  }
+
+  .action-btn {
+    @apply px-3 py-1.5 rounded-md text-sm font-medium transition-colors duration-200 flex items-center justify-center;
+    background-color: hsl(var(--secondary));
+    color: hsl(var(--secondary-foreground));
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .action-btn:hover {
+    background-color: hsl(var(--secondary) / 0.8);
+  }
+
+  .action-btn svg {
+    display: block;
+  }
+
+  .action-btn.bg-blue-600 {
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+  }
+
+  .action-btn.bg-blue-600:hover {
+    background-color: hsl(var(--primary) / 0.9);
+  }
+
+  .action-btn.bg-green-600 {
+    background-color: hsl(142 76% 36%);
+    color: hsl(var(--primary-foreground));
+  }
+
+  .action-btn.bg-green-600:hover {
+    background-color: hsl(142 76% 32%);
+  }
+
+  /* Dark theme improvements */
+  [data-theme="dark"] .universal-file-access {
+    background-color: hsl(var(--background));
+    border-color: hsl(var(--border));
+  }
+
+  [data-theme="dark"] .file-node .file-node-content:hover {
+    background-color: hsl(var(--accent) / 0.15);
+  }
+
+  /* Platform-specific styling */
+  .windows-style {
+    font-family: 'Segoe UI', sans-serif;
+  }
+
+  .macos-style {
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    border-radius: 8px;
+  }
+
+  .linux-style {
+    font-family: 'Ubuntu', 'Liberation Sans', sans-serif;
+  }
+
+  .mobile-style {
+    font-size: 16px;
+    padding: 12px;
+    touch-action: manipulation;
+  }
+
+  .mobile-style .action-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
 }

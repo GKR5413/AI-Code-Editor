@@ -223,17 +223,26 @@ wss.on('connection', async (ws, req) => {
     
     // Create exec instance for cleaner terminal interaction
     const exec = await container.exec({
-      Cmd: ['/bin/bash'],
+      Cmd: ['/bin/bash', '--login'],
       AttachStdout: true,
       AttachStderr: true,
       AttachStdin: true,
-      Tty: true
+      Tty: true,
+      Env: [
+        'TERM=xterm-256color',
+        'COLORTERM=truecolor',
+        'HOME=/root',
+        'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+      ]
     });
     
     stream = await exec.start({
       hijack: true,
       stdin: true
     });
+    
+    // Wait a moment for the exec instance to be ready
+    await new Promise(resolve => setTimeout(resolve, 500));
     
     // Store connection info
     connections.set(sessionId, { 
@@ -261,6 +270,7 @@ wss.on('connection', async (ws, req) => {
       if (ws.readyState === ws.OPEN) {
         // For TTY containers with hijack, data comes directly without Docker headers
         const output = chunk.toString();
+        console.log(`📤 Container output for session ${sessionId}:`, JSON.stringify(output));
         ws.send(JSON.stringify({
           type: 'output',
           data: output
@@ -277,6 +287,11 @@ wss.on('connection', async (ws, req) => {
       console.log(`Stream ended for session ${sessionId}`);
     });
     
+    // Keep the stream alive
+    stream.on('close', () => {
+      console.log(`Stream closed for session ${sessionId}`);
+    });
+    
     // Handle WebSocket messages
     ws.on('message', async (message) => {
       try {
@@ -286,8 +301,15 @@ wss.on('connection', async (ws, req) => {
           case 'input':
             console.log(`📝 Received input for session ${sessionId}:`, JSON.stringify(data.data));
             if (stream && stream.writable) {
-              // Send input to container (don't add newline automatically)
-              stream.write(data.data);
+              try {
+                // Send input to container
+                const success = stream.write(data.data);
+                console.log(`📤 Input sent to container ${sessionId}:`, success ? 'success' : 'buffer full');
+              } catch (error) {
+                console.error(`Error sending input to container ${sessionId}:`, error.message);
+              }
+            } else {
+              console.error(`Stream not writable for session ${sessionId}`);
             }
             break;
             
@@ -352,11 +374,20 @@ wss.on('connection', async (ws, req) => {
     }
     
     if (stream) {
-      stream.destroy();
+      try {
+        stream.destroy();
+      } catch (error) {
+        console.error(`Error destroying stream for session ${sessionId}:`, error.message);
+      }
     }
     
     connections.delete(sessionId);
     containers.delete(sessionId);
+  });
+  
+  // Handle WebSocket errors
+  ws.on('error', (error) => {
+    console.error(`WebSocket error for session ${sessionId}:`, error.message);
   });
   
   // Handle WebSocket errors

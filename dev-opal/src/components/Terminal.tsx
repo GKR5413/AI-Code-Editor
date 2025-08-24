@@ -3,6 +3,16 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
+// import { terminalConfig } from '@/config/terminal';
+
+// Temporary hardcoded configuration for testing
+const terminalConfig = {
+  WEBSOCKET_URL: 'ws://localhost:3003',
+  API_BASE_URL: 'http://localhost:3003',
+  HEALTH_ENDPOINT: 'http://localhost:3003/health',
+  RECONNECT_DELAY: 3000,
+  CONNECTION_TIMEOUT: 10000,
+};
 
 const TerminalComponent: React.FC = () => {
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -41,8 +51,10 @@ const TerminalComponent: React.FC = () => {
     terminal.current.open(terminalRef.current);
     fitAddon.current.fit();
 
-    // Auto-connect on initialization
-    connectWebSocket();
+    // Auto-connect on initialization with a small delay to ensure component is mounted
+    setTimeout(() => {
+      connectWebSocket();
+    }, 100);
   }, []);
 
   const connectWebSocket = useCallback(() => {
@@ -52,8 +64,13 @@ const TerminalComponent: React.FC = () => {
 
     setConnected(false);
     
+    console.log('🔌 Attempting to connect to:', terminalConfig.WEBSOCKET_URL);
+    console.log('📋 Terminal config:', terminalConfig);
+    console.log('🔌 WebSocket URL type:', typeof terminalConfig.WEBSOCKET_URL);
+    console.log('🔌 WebSocket URL value:', terminalConfig.WEBSOCKET_URL);
+    
     try {
-      ws.current = new WebSocket('ws://localhost:3001');
+      ws.current = new WebSocket(terminalConfig.WEBSOCKET_URL);
 
       ws.current.onopen = () => {
         console.log('Terminal WebSocket connected');
@@ -97,10 +114,10 @@ const TerminalComponent: React.FC = () => {
         console.log('Terminal WebSocket disconnected');
         setConnected(false);
         
-        // Auto-reconnect after 3 seconds
+        // Auto-reconnect after configured delay
         setTimeout(() => {
           connectWebSocket();
-        }, 3000);
+        }, terminalConfig.RECONNECT_DELAY);
       };
 
       ws.current.onerror = (error) => {

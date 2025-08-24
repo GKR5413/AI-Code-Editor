@@ -1,9 +1,11 @@
+import { terminalConfig } from '@/config/terminal';
+
 export class TerminalServerManager {
   private static instance: TerminalServerManager;
   private serverStarted: boolean = false;
   private serverProcess: any = null;
-  private serverPort: number = 3001;
-  private serverUrl: string = 'http://localhost:3001';
+  private serverPort: number = 3003; // Updated to match Docker port mapping
+  private serverUrl: string = terminalConfig.API_BASE_URL;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private startupPromise: Promise<void> | null = null;
 

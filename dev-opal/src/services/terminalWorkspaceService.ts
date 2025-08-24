@@ -1,7 +1,8 @@
 import { IDEFileNode } from '@/contexts/IDEContext';
+import { terminalConfig } from '@/config/terminal';
 
 export class TerminalWorkspaceService {
-  private baseUrl = 'http://localhost:3001';
+  private baseUrl = terminalConfig.API_BASE_URL;
   private sessionId: string | null = null;
 
   setSessionId(sessionId: string) {
@@ -13,13 +14,8 @@ export class TerminalWorkspaceService {
   }
 
   async getFiles(path: string = ''): Promise<IDEFileNode[]> {
-    const sessionId = this.getSessionId();
-    if (!sessionId) {
-      throw new Error('No active terminal session');
-    }
-
     try {
-      const response = await fetch(`${this.baseUrl}/workspace/${sessionId}/files?path=${encodeURIComponent(path)}`);
+      const response = await fetch(`${this.baseUrl}/api/workspace/files?path=${encodeURIComponent(path)}`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -28,12 +24,10 @@ export class TerminalWorkspaceService {
 
       // Convert API response to IDEFileNode format
       return data.files.map((file: any) => ({
-        id: `${sessionId}:${file.path}`,
+        id: file.id || file.path,
         name: file.name,
         type: file.type,
         path: file.path,
-        size: file.size,
-        modified: new Date(file.modified),
         children: file.type === 'folder' ? [] : undefined
       }));
     } catch (error) {
@@ -43,13 +37,8 @@ export class TerminalWorkspaceService {
   }
 
   async getFileContent(filePath: string): Promise<string> {
-    const sessionId = this.getSessionId();
-    if (!sessionId) {
-      throw new Error('No active terminal session');
-    }
-
     try {
-      const response = await fetch(`${this.baseUrl}/workspace/${sessionId}/content?path=${encodeURIComponent(filePath)}`);
+      const response = await fetch(`${this.baseUrl}/api/workspace/content?path=${encodeURIComponent(filePath)}`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -80,7 +69,8 @@ export class TerminalWorkspaceService {
   }
 
   isConnected(): boolean {
-    return this.getSessionId() !== null;
+    // For now, always return true since we can access the Docker volume directly
+    return true;
   }
 }
 

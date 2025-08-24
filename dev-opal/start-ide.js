@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-console.log('🚀 Starting AI-IDE...');
+console.log('🚀 Starting VelocIDE...');
 console.log('This will start both the development server and terminal server');
 
 // Start both processes concurrently
@@ -25,7 +25,7 @@ const terminalServer = spawn('npm', ['run', 'terminal'], {
 
 // Handle process cleanup
 process.on('SIGINT', () => {
-  console.log('\n🛑 Shutting down AI-IDE...');
+  console.log('\n🛑 Shutting down VelocIDE...');
   devServer.kill('SIGINT');
   terminalServer.kill('SIGINT');
   process.exit(0);
@@ -52,5 +52,5 @@ terminalServer.on('exit', (code, signal) => {
   process.exit(code || 0);
 });
 
-console.log('✅ AI-IDE is starting up...');
+console.log('✅ VelocIDE is starting up...');
 console.log('Press Ctrl+C to stop both servers');

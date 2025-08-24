@@ -9,6 +9,7 @@ const helmet = require('helmet');
 const compression = require('compression');
 const winston = require('winston');
 const { RateLimiterMemory } = require('rate-limiter-flexible');
+const WebSocket = require('ws');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -607,14 +608,192 @@ app.use((req, res) => {
   });
 });
 
+// Handle interactive WebSocket messages
+async function handleInteractiveMessage(ws, sessionId, data) {
+  const { type, payload } = data;
+  
+  switch (type) {
+    case 'start':
+      // Start interactive execution
+      await startInteractiveExecution(ws, sessionId, payload);
+      break;
+      
+    case 'input':
+      // Forward input to running process
+      const session = activeSessions.get(sessionId);
+      if (session && session.process && session.process.stdin) {
+        session.process.stdin.write(payload.data);
+      }
+      break;
+      
+    case 'stop':
+      // Stop execution
+      const stopSession = activeSessions.get(sessionId);
+      if (stopSession && stopSession.process) {
+        stopSession.process.kill('SIGTERM');
+        activeSessions.delete(sessionId);
+        ws.send(JSON.stringify({
+          type: 'stopped',
+          message: 'Execution stopped'
+        }));
+      }
+      break;
+      
+    default:
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Unknown message type: ${type}`
+      }));
+  }
+}
+
+// Start interactive execution
+async function startInteractiveExecution(ws, sessionId, payload) {
+  const { language, code, filename } = payload;
+  
+  if (!LANGUAGES[language]) {
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: `Unsupported language: ${language}`
+    }));
+    return;
+  }
+  
+  const lang = LANGUAGES[language];
+  const actualFilename = filename || `main${lang.extension}`;
+  const workspaceDir = path.join('./workspace', sessionId);
+  const sourceFile = path.join(workspaceDir, actualFilename);
+  
+  try {
+    // Create workspace directory
+    await fs.ensureDir(workspaceDir);
+    
+    // Write source code to file
+    await fs.writeFile(sourceFile, code, 'utf8');
+    
+    // Create interactive process
+    const runCommand = lang.run(sourceFile, workspaceDir);
+    const args = runCommand.split(' ');
+    const command = args.shift();
+    
+    const process = spawn(command, args, {
+      cwd: workspaceDir,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        TERM: 'xterm-256color',
+        PYTHONUNBUFFERED: '1' // Important for Python interactive programs
+      }
+    });
+    
+    // Store session
+    activeSessions.set(sessionId, {
+      process,
+      workspaceDir,
+      startTime: Date.now()
+    });
+    
+    // Handle process output
+    process.stdout.on('data', (data) => {
+      ws.send(JSON.stringify({
+        type: 'stdout',
+        data: data.toString()
+      }));
+    });
+    
+    process.stderr.on('data', (data) => {
+      ws.send(JSON.stringify({
+        type: 'stderr',
+        data: data.toString()
+      }));
+    });
+    
+    // Handle process exit
+    process.on('close', (code) => {
+      ws.send(JSON.stringify({
+        type: 'exit',
+        code,
+        message: `Process exited with code ${code}`
+      }));
+      
+      // Clean up
+      activeSessions.delete(sessionId);
+      setTimeout(async () => {
+        try {
+          await fs.remove(workspaceDir);
+        } catch (error) {
+          logger.warn(`Cleanup error for session ${sessionId}: ${error.message}`);
+        }
+      }, 5000);
+    });
+    
+    process.on('error', (error) => {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Process error: ${error.message}`
+      }));
+      activeSessions.delete(sessionId);
+    });
+    
+    // Send start confirmation
+    ws.send(JSON.stringify({
+      type: 'started',
+      sessionId,
+      message: 'Interactive execution started'
+    }));
+    
+  } catch (error) {
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: `Execution error: ${error.message}`
+    }));
+  }
+}
+
 // Initialize server
 const startServer = async () => {
   try {
     await ensureDirectories();
     
-    app.listen(PORT, '0.0.0.0', () => {
+    server = app.listen(PORT, '0.0.0.0', () => {
       logger.info(`🚀 Compiler service running on port ${PORT}`);
       logger.info(`📋 Supported languages: ${Object.keys(LANGUAGES).join(', ')}`);
+      
+      // Start WebSocket server for interactive execution
+      wss = new WebSocket.Server({ port: 4002 }); // WebSocket on port 4002
+      logger.info(`🔌 WebSocket server for interactive execution running on port 4002`);
+      
+      wss.on('connection', (ws, req) => {
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const sessionId = url.searchParams.get('sessionId');
+        logger.info(`📡 Interactive session connected: ${sessionId}`);
+        
+        ws.on('message', async (message) => {
+          try {
+            const data = JSON.parse(message);
+            await handleInteractiveMessage(ws, sessionId, data);
+          } catch (error) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: `Parse error: ${error.message}`
+            }));
+          }
+        });
+        
+        ws.on('close', () => {
+          logger.info(`📡 Interactive session disconnected: ${sessionId}`);
+          // Clean up session
+          const session = activeSessions.get(sessionId);
+          if (session && session.process) {
+            session.process.kill('SIGTERM');
+          }
+          activeSessions.delete(sessionId);
+        });
+        
+        ws.on('error', (error) => {
+          logger.error(`WebSocket error for session ${sessionId}:`, error);
+        });
+      });
     });
   } catch (error) {
     logger.error('Failed to start server:', error);
@@ -622,14 +801,63 @@ const startServer = async () => {
   }
 };
 
+// Interactive execution endpoint via WebSocket
+app.post('/api/run-interactive', async (req, res) => {
+  const { language, code, filename } = req.body;
+  
+  if (!language || !code) {
+    return res.status(400).json({
+      success: false,
+      error: 'Language and code are required'
+    });
+  }
+  
+  if (!LANGUAGES[language]) {
+    return res.status(400).json({
+      success: false,
+      error: `Unsupported language: ${language}`
+    });
+  }
+  
+  const sessionId = uuidv4();
+  const wsPort = 3003 + Math.floor(Math.random() * 100); // Random port for this session
+  
+  // Return session info for WebSocket connection
+  res.json({
+    success: true,
+    sessionId,
+    wsPort,
+    message: 'Interactive session prepared. Connect via WebSocket.'
+  });
+});
+
+// WebSocket server for interactive execution
+let server;
+let wss;
+
+// Store active sessions
+const activeSessions = new Map();
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down gracefully');
+  if (wss) {
+    wss.close();
+  }
+  if (server) {
+    server.close();
+  }
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received, shutting down gracefully');
+  if (wss) {
+    wss.close();
+  }
+  if (server) {
+    server.close();
+  }
   process.exit(0);
 });
 

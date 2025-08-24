@@ -41,10 +41,6 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
   const [executionResult, setExecutionResult] = useState<CompilationResult | null>(null);
   const [input, setInput] = useState('');
   const [compilerConnected, setCompilerConnected] = useState(false);
-  const [isInteractive, setIsInteractive] = useState(false);
-  const [interactiveOutput, setInteractiveOutput] = useState<string[]>([]);
-  const [interactiveInput, setInteractiveInput] = useState('');
-  const [wsConnection, setWsConnection] = useState<WebSocket | null>(null);
   const [expandedSections, setExpandedSections] = useState({
     compilation: true,
     execution: true,
@@ -146,110 +142,11 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
     }
   }, [activeTab, selectedLanguage, input]);
 
-  const handleRunInteractive = useCallback(async () => {
-    if (!activeTab || !activeTab.content) {
-      alert('No code to run. Please open a file first.');
-      return;
-    }
-
-    setIsRunning(true);
-    setIsInteractive(true);
-    setInteractiveOutput([]);
-    setExecutionResult(null);
-    
-    try {
-      // Connect to WebSocket for interactive execution
-      const sessionId = Date.now().toString();
-      const ws = new WebSocket(`ws://localhost:4002?sessionId=${sessionId}`);
-      setWsConnection(ws);
-      
-      ws.onopen = () => {
-        // Start interactive execution
-        ws.send(JSON.stringify({
-          type: 'start',
-          payload: {
-            language: selectedLanguage,
-            code: activeTab.content,
-            filename: activeTab.name
-          }
-        }));
-      };
-      
-      ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        handleInteractiveMessage(data);
-      };
-      
-      ws.onclose = () => {
-        setIsRunning(false);
-        setIsInteractive(false);
-        setWsConnection(null);
-      };
-      
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setInteractiveOutput(prev => [...prev, `WebSocket error: ${error}`]);
-        setIsRunning(false);
-        setIsInteractive(false);
-      };
-      
-    } catch (error) {
-      setExecutionResult({
-        success: false,
-        stage: 'execution',
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      });
-      setIsRunning(false);
-      setIsInteractive(false);
-    }
-  }, [activeTab, selectedLanguage]);
-
-  const handleInteractiveMessage = (data: any) => {
-    switch (data.type) {
-      case 'started':
-        setInteractiveOutput(prev => [...prev, '🚀 Interactive execution started...']);
-        break;
-      case 'stdout':
-        setInteractiveOutput(prev => [...prev, data.data]);
-        break;
-      case 'stderr':
-        setInteractiveOutput(prev => [...prev, `❌ ${data.data}`]);
-        break;
-      case 'exit':
-        setInteractiveOutput(prev => [...prev, `✅ Program finished with exit code ${data.code}`]);
-        setIsRunning(false);
-        setIsInteractive(false);
-        if (wsConnection) {
-          wsConnection.close();
-          setWsConnection(null);
-        }
-        break;
-      case 'error':
-        setInteractiveOutput(prev => [...prev, `❌ Error: ${data.message}`]);
-        break;
-    }
-  };
-
-  const sendInteractiveInput = () => {
-    if (wsConnection && interactiveInput) {
-      wsConnection.send(JSON.stringify({
-        type: 'input',
-        payload: { data: interactiveInput + '\n' }
-      }));
-      setInteractiveOutput(prev => [...prev, `> ${interactiveInput}`]);
-      setInteractiveInput('');
-    }
-  };
-
   const handleStop = () => {
-    if (wsConnection) {
-      wsConnection.send(JSON.stringify({ type: 'stop' }));
-      wsConnection.close();
-      setWsConnection(null);
-    }
+    // In a real implementation, you would need to track running processes
+    // and provide a way to terminate them
     setIsRunning(false);
     setIsCompiling(false);
-    setIsInteractive(false);
   };
 
   const loadSampleCode = () => {

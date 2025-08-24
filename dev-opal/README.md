@@ -1,6 +1,6 @@
-# AI Code Editor
+# VelocIDE
 
-A modern, web-based integrated development environment with containerized terminal, Monaco code editor, and real-time file synchronization. Built with React, TypeScript, Docker, and WebSocket technology.
+VelocIDE - A modern, web-based integrated development environment with containerized terminal, Monaco code editor, and real-time file synchronization. Built with React, TypeScript, Docker, and WebSocket technology.
 
 ## ✨ Features
 
@@ -33,8 +33,8 @@ A modern, web-based integrated development environment with containerized termin
 ### Installation
 ```bash
 # Clone the repository
-git clone https://github.com/GKR5413/AI-Code-Editor.git
-cd AI-Code-Editor
+git clone https://github.com/GKR5413/VelocIDE.git
+cd VelocIDE
 
 # Install dependencies
 npm install
@@ -74,7 +74,7 @@ cd compiler-service && node server.js &
 ## 📁 Project Structure
 
 ```
-AI-Code-Editor/
+VelocIDE/
 ├── src/
 │   ├── components/
 │   │   ├── CodeEditor.tsx      # Monaco editor integration
@@ -227,11 +227,11 @@ curl http://localhost:3001/health
 curl http://localhost:3004/health
 
 # View container logs
-docker logs ai-code-editor-terminal
-docker logs ai-code-editor-compiler
+docker logs velocide-terminal
+docker logs velocide-compiler
 
 # Monitor WebSocket connections
-docker logs -f ai-code-editor-terminal | grep WebSocket
+docker logs -f velocide-terminal | grep WebSocket
 ```
 
 ## 📄 License

@@ -1,6 +1,6 @@
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
@@ -23,8 +23,8 @@ app.use((req, res, next) => {
   }
 });
 
-const server = app.listen(3004, () => {
-  console.log('🚀 Terminal server running on port 3004');
+const server = app.listen(3006, () => {
+  console.log('🚀 Terminal server running on port 3006');
   console.log(`📱 Platform: ${os.platform()}`);
   console.log(`🐚 Shell: ${os.platform() === 'win32' ? 'powershell.exe' : '/bin/bash'}`);
   console.log(`🏠 Home directory: ${process.env.HOME || process.cwd()}`);
@@ -77,7 +77,11 @@ wss.on('connection', (ws, req) => {
     ws, 
     history: [], 
     clientIp,
-    currentWorkingDir: initialCwd
+    currentWorkingDir: initialCwd,
+    inputBuffer: '', // Add input buffer for line buffering
+    dockerWorkingDir: '/app/workspace', // Track Docker container working directory
+    interactiveMode: false, // Track if we're in interactive mode
+    activeProcess: null // Track active Docker process
   });
   
   // Send initial message after a small delay to ensure connection is ready
@@ -90,27 +94,10 @@ wss.on('connection', (ws, req) => {
           shell: os.platform() === 'win32' ? 'powershell.exe' : '/bin/bash'
         }));
         
-        // Send welcome message
+        // Send initial prompt
         ws.send(JSON.stringify({
           type: 'output',
-          data: `\r\n🚀 Terminal Connected Successfully!\r\n`
-        }));
-        
-        ws.send(JSON.stringify({
-          type: 'output',
-          data: `🐚 Shell: ${os.platform() === 'win32' ? 'powershell.exe' : '/bin/bash'}\r\n`
-        }));
-        
-        ws.send(JSON.stringify({
-          type: 'output',
-          data: `📁 Working Directory: ${initialCwd}\r\n\r\n`
-        }));
-        
-        // Send prompt with current directory
-        const shortPath = initialCwd.replace(process.env.HOME || '', '~');
-        ws.send(JSON.stringify({
-          type: 'output',
-          data: `${shortPath} $ `
+          data: `developer@container:/app/workspace$ `
         }));
       }
     } catch (error) {
@@ -125,8 +112,9 @@ wss.on('connection', (ws, req) => {
       
       switch (msg.type) {
         case 'input':
-          // Handle command input
-          handleCommand(connectionId, msg.data);
+          // Handle input character by character, buffer until Enter
+          console.log('📨 Received input:', JSON.stringify(msg.data));
+          handleInput(connectionId, msg.data);
           break;
           
         case 'clear':
@@ -165,6 +153,14 @@ wss.on('connection', (ws, req) => {
   // Handle connection close
   ws.on('close', (code, reason) => {
     console.log(`🔌 Terminal connection ${connectionId} closed (${code}: ${reason})`);
+    
+    // Clean up active process if any
+    const connection = connections.get(connectionId);
+    if (connection && connection.activeProcess) {
+      console.log('🧹 Cleaning up active process');
+      connection.activeProcess.kill('SIGTERM');
+    }
+    
     connections.delete(connectionId);
   });
 
@@ -185,10 +181,138 @@ function getPrompt(currentWorkingDir) {
   return `${shortPath} $ `;
 }
 
-// Handle command execution
-function handleCommand(connectionId, command) {
+// Handle input buffering - accumulate keystrokes until Enter is pressed
+function handleInput(connectionId, data) {
   const connection = connections.get(connectionId);
   if (!connection || !connection.ws || connection.ws.readyState !== 1) {
+    return;
+  }
+
+  // If we're in interactive mode, forward input directly to the active process
+  if (connection.interactiveMode && connection.activeProcess) {
+    console.log('📨 Forwarding to interactive process:', JSON.stringify(data));
+    if (connection.activeProcess.stdin && connection.activeProcess.stdin.writable) {
+      connection.activeProcess.stdin.write(data);
+    }
+    return;
+  }
+
+  const { ws, inputBuffer } = connection;
+  
+  // Handle special keys
+  if (data === '\r' || data === '\n') {
+    // Enter pressed - execute the buffered command
+    const command = connection.inputBuffer;
+    connection.inputBuffer = ''; // Clear buffer
+    
+    // Execute the command (no echo needed, client handles display)
+    console.log('⚡ Executing buffered command:', JSON.stringify(command));
+    handleCommand(connectionId, command);
+    return;
+  }
+  
+  if (data === '\u007f' || data === '\b') {
+    // Backspace - remove last character from buffer (client handles display)
+    if (connection.inputBuffer.length > 0) {
+      connection.inputBuffer = connection.inputBuffer.slice(0, -1);
+    }
+    return;
+  }
+  
+  // Regular character - add to buffer (no echo needed, client handles display)
+  if (data.length === 1 && data >= ' ') {
+    connection.inputBuffer += data;
+  }
+}
+
+// Handle interactive commands with persistent Docker shell
+function handleInteractiveCommand(connectionId, command) {
+  const connection = connections.get(connectionId);
+  if (!connection || !connection.ws || connection.ws.readyState !== 1) {
+    return;
+  }
+
+  const { ws } = connection;
+  const workingDir = connection.dockerWorkingDir || '/app/workspace';
+
+  console.log('🔄 Starting interactive command:', command);
+
+  // Switch to interactive mode
+  connection.interactiveMode = true;
+
+  // Use script command to create a proper PTY session
+  const dockerProcess = spawn('docker', [
+    'exec', '-i',
+    '-e', 'TERM=xterm-256color',
+    '-e', 'COLORTERM=truecolor',
+    'dev-opal-compiler-1',
+    'script', '-qec', `cd ${workingDir} && ${command}`, '/dev/null'
+  ], {
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+
+  // Store the active process
+  connection.activeProcess = dockerProcess;
+
+  // Handle process output
+  dockerProcess.stdout.on('data', (data) => {
+    const output = data.toString();
+    console.log('📤 Interactive output:', JSON.stringify(output));
+    
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({
+        type: 'output',
+        data: output
+      }));
+    }
+  });
+
+  dockerProcess.stderr.on('data', (data) => {
+    const output = data.toString();
+    console.log('📤 Interactive stderr:', JSON.stringify(output));
+    
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({
+        type: 'output',
+        data: output
+      }));
+    }
+  });
+
+  // Handle process exit
+  dockerProcess.on('close', (code) => {
+    console.log('🏁 Interactive process exited with code:', code);
+    connection.interactiveMode = false;
+    connection.activeProcess = null;
+    
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({
+        type: 'output',
+        data: '\r\n'
+      }));
+    }
+  });
+
+  dockerProcess.on('error', (error) => {
+    console.error('❌ Interactive process error:', error);
+    connection.interactiveMode = false;
+    connection.activeProcess = null;
+    
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({
+        type: 'output',
+        data: `Error: ${error.message}\r\n`
+      }));
+    }
+  });
+}
+
+// Handle command execution
+function handleCommand(connectionId, command) {
+  console.log('🔥 handleCommand called with:', JSON.stringify(command));
+  const connection = connections.get(connectionId);
+  if (!connection || !connection.ws || connection.ws.readyState !== 1) {
+    console.log('❌ Connection not found or not ready');
     return;
   }
 
@@ -196,9 +320,11 @@ function handleCommand(connectionId, command) {
   
   // Clean and validate command
   const cleanCommand = command.trim();
+  console.log('🧹 Cleaned command:', JSON.stringify(cleanCommand));
   
   // Skip empty commands
   if (!cleanCommand) {
+    console.log('⚠️ Empty command, skipping');
     ws.send(JSON.stringify({
       type: 'output',
       data: getPrompt(currentWorkingDir)
@@ -209,95 +335,86 @@ function handleCommand(connectionId, command) {
   // Add command to history
   history.push(cleanCommand);
   if (history.length > 100) history.shift(); // Keep last 100 commands
-  
-  // Echo the command
-  ws.send(JSON.stringify({
-    type: 'output',
-    data: `${cleanCommand}\r\n`
-  }));
 
-  // Handle special commands that change working directory
-  if (cleanCommand.startsWith('cd ')) {
-    const newPath = cleanCommand.substring(3).trim();
-    let targetPath;
-    
-    if (newPath === '..') {
-      // Go up one directory
-      targetPath = path.dirname(currentWorkingDir);
-    } else if (newPath === '~' || newPath === '') {
-      // Go to home directory
-      targetPath = process.env.HOME || process.cwd();
-    } else if (newPath.startsWith('/')) {
-      // Absolute path
-      targetPath = newPath;
-    } else {
-      // Relative path
-      targetPath = path.resolve(currentWorkingDir, newPath);
-    }
-    
-    // Check if directory exists
-    try {
-      if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
-        // Update working directory
-        connection.currentWorkingDir = targetPath;
-        
-        // Send confirmation
-        ws.send(JSON.stringify({
-          type: 'output',
-          data: `Changed directory to: ${targetPath}\r\n`
-        }));
-        
-        // Send new prompt
-        ws.send(JSON.stringify({
-          type: 'output',
-          data: getPrompt(targetPath)
-        }));
-        return;
-      } else {
-        ws.send(JSON.stringify({
-          type: 'output',
-          data: `Error: Directory '${newPath}' does not exist\r\n`
-        }));
-        
-        // Send new prompt
-        ws.send(JSON.stringify({
-          type: 'output',
-          data: getPrompt(currentWorkingDir)
-        }));
-        return;
-      }
-    } catch (error) {
-      ws.send(JSON.stringify({
-        type: 'output',
-        data: `Error: ${error.message}\r\n`
-      }));
-      
-      // Send new prompt
-      ws.send(JSON.stringify({
-        type: 'output',
-        data: getPrompt(currentWorkingDir)
-      }));
-      return;
-    }
-  }
-  
-  // Handle pwd command to show current working directory
-  if (cleanCommand === 'pwd') {
+  // Handle clear command - send clear signal to client
+  if (cleanCommand === 'clear') {
     ws.send(JSON.stringify({
-      type: 'output',
-      data: `${currentWorkingDir}\r\n`
-    }));
-    
-    // Send new prompt
-    ws.send(JSON.stringify({
-      type: 'output',
-      data: getPrompt(currentWorkingDir)
+      type: 'clear'
     }));
     return;
   }
 
-  // Execute the command directly with exec
-  exec(cleanCommand, { 
+  // Handle cd command for Docker container navigation
+  if (cleanCommand.startsWith('cd ')) {
+    const newPath = cleanCommand.substring(3).trim();
+    
+    // Initialize Docker working directory if not set
+    if (!connection.dockerWorkingDir) {
+      connection.dockerWorkingDir = '/app/workspace';
+    }
+    
+    let targetPath;
+    
+    if (newPath === '..') {
+      // Go up one directory
+      targetPath = path.posix.dirname(connection.dockerWorkingDir);
+      // Don't go above /app/workspace
+      if (!targetPath.startsWith('/app/workspace')) {
+        targetPath = '/app/workspace';
+      }
+    } else if (newPath === '~' || newPath === '') {
+      // Go to workspace root
+      targetPath = '/app/workspace';
+    } else if (newPath.startsWith('/')) {
+      // Absolute path - but keep within workspace
+      if (newPath.startsWith('/app/workspace')) {
+        targetPath = newPath;
+      } else {
+        targetPath = '/app/workspace' + newPath;
+      }
+    } else {
+      // Relative path
+      targetPath = path.posix.join(connection.dockerWorkingDir, newPath);
+    }
+    
+    // Check if directory exists in Docker container
+    const checkDirCommand = `docker exec dev-opal-compiler-1 test -d "${targetPath}"`;
+    exec(checkDirCommand, (error, stdout, stderr) => {
+      if (error) {
+        // Directory doesn't exist
+        ws.send(JSON.stringify({
+          type: 'output',
+          data: `Error: Directory '${newPath}' does not exist`
+        }));
+      } else {
+        // Directory exists, update working directory
+        connection.dockerWorkingDir = targetPath;
+        // No output for successful cd (like real bash)
+      }
+    });
+    return;
+  }
+  
+  // Check if this is an interactive command that needs real-time input
+  const interactiveCommands = ['python', 'python3', 'node', 'nano', 'vi', 'vim', 'less', 'more', 'top', 'htop'];
+  const isInteractiveCommand = interactiveCommands.some(cmd => 
+    cleanCommand.startsWith(cmd + ' ') || cleanCommand === cmd
+  );
+
+  if (isInteractiveCommand) {
+    // Handle interactive commands with persistent shell
+    handleInteractiveCommand(connectionId, cleanCommand);
+    return;
+  }
+
+  // Let all commands go through Docker execution (removed pwd special handler)
+
+  // Execute the command inside the Docker container
+  // Use tracked working directory or default to /app/workspace
+  const workingDir = connection.dockerWorkingDir || '/app/workspace';
+  const dockerCommand = `docker exec -i -e TERM=xterm-256color -e COLORTERM=truecolor dev-opal-compiler-1 bash -c "cd ${workingDir} && ${cleanCommand.replace(/"/g, '\\"')}"`;
+  console.log('🐳 Executing Docker command:', dockerCommand);
+  exec(dockerCommand, { 
     cwd: currentWorkingDir,
     env: {
       ...process.env,
@@ -331,35 +448,22 @@ function handleCommand(connectionId, command) {
       }
       
       if (stdout) {
-        // Ensure proper line endings for terminal display
-        let formattedOutput = stdout;
+        // Clean up output and preserve formatting
+        let formattedOutput = stdout.toString().trim();
         
-        // Replace any carriage returns with proper newlines
-        formattedOutput = formattedOutput.replace(/\r\n/g, '\r\n');
-        formattedOutput = formattedOutput.replace(/\r/g, '\r\n');
-        
-        // For line-by-line commands like 'ls', preserve the original formatting
-        // Don't strip spaces or modify line structure
-        
-        // Ensure it ends with a carriage return + newline for terminal
-        if (!formattedOutput.endsWith('\r\n') && !formattedOutput.endsWith('\n')) {
-          formattedOutput += '\r\n';
-        } else if (formattedOutput.endsWith('\n') && !formattedOutput.endsWith('\r\n')) {
-          // Replace single newlines with proper terminal newlines
-          formattedOutput = formattedOutput.replace(/([^\r])\n/g, '$1\r\n');
+        if (formattedOutput) {
+          // Send stdout output
+          ws.send(JSON.stringify({
+            type: 'output',
+            data: formattedOutput
+          }));
         }
-        
-        // Send stdout output
-        ws.send(JSON.stringify({
-          type: 'output',
-          data: formattedOutput
-        }));
       }
       
       // Send new prompt
       ws.send(JSON.stringify({
         type: 'output',
-        data: getPrompt(currentWorkingDir)
+        data: 'developer@container:/app/workspace$ '
       }));
       
     } catch (wsError) {
@@ -530,6 +634,83 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     rateLimited: Array.from(connectionAttempts.entries()).filter(([_, attempts]) => attempts >= maxConnectionAttempts).length
   });
+});
+
+// Terminal workspace API endpoints for file explorer integration
+app.get('/api/workspace/files', async (req, res) => {
+  try {
+    const path = req.query.path || '';
+    const basePath = '/app/workspace';
+    const fullPath = path ? `${basePath}/${path}` : basePath;
+    
+    const command = `docker exec dev-opal-compiler-1 bash -c "cd '${fullPath}' && find . -maxdepth 1 \\( -type f -o -type d \\) | grep -v '^\\.$' | sort"`;
+    
+    // exec is already imported at the top
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error('Error listing workspace files:', error);
+        return res.status(500).json({ error: 'Failed to list files' });
+      }
+      
+      const entries = stdout.split('\n').filter(line => line.trim()).map(entry => {
+        const name = entry.replace('./', '');
+        const entryPath = path ? `${path}/${name}` : name;
+        
+        return {
+          name,
+          path: entryPath,
+          id: entryPath
+        };
+      });
+      
+      // Get detailed info for each entry
+      Promise.all(entries.map(entry => 
+        new Promise((resolve) => {
+          const statCommand = `docker exec dev-opal-compiler-1 stat -c "%F" "${basePath}/${entry.path}"`;
+          exec(statCommand, (error, stdout) => {
+            if (error) {
+              resolve({ ...entry, type: 'file' });
+            } else {
+              const fileType = stdout.trim();
+              resolve({
+                ...entry,
+                type: fileType.includes('directory') ? 'folder' : 'file'
+              });
+            }
+          });
+        })
+      )).then(detailedFiles => {
+        res.json({ files: detailedFiles });
+      });
+    });
+  } catch (error) {
+    console.error('Error in workspace files endpoint:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/workspace/content', async (req, res) => {
+  try {
+    const filePath = req.query.path;
+    if (!filePath) {
+      return res.status(400).json({ error: 'File path is required' });
+    }
+    
+    const command = `docker exec dev-opal-compiler-1 cat "/app/workspace/${filePath}"`;
+    // exec is already imported at the top
+    
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error('Error reading file:', error);
+        return res.status(404).json({ error: 'File not found or cannot be read' });
+      }
+      
+      res.json({ content: stdout });
+    });
+  } catch (error) {
+    console.error('Error in workspace content endpoint:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Test command execution endpoint

@@ -10,7 +10,8 @@ import {
   Command,
   ChevronDown,
   FolderOpen,
-  SaveAll
+  SaveAll,
+  Zap
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -34,9 +35,9 @@ export const TopBar: React.FC = () => {
       <div className="flex items-center gap-4 px-4">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-gradient-to-br from-md-primary to-md-accent rounded-lg flex items-center justify-center">
-            <Code2 size={16} className="text-white" />
+            <Zap size={16} className="text-white" />
           </div>
-          <h1 className="md-title-medium text-md-primary font-semibold">AI IDE</h1>
+          <h1 className="md-title-medium text-md-primary font-semibold">VelocIDE</h1>
         </div>
         
         <nav className="flex items-center gap-1">

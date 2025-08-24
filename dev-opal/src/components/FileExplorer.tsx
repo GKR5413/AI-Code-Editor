@@ -1,7 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { 
-  ChevronRight, 
-  ChevronDown, 
   File, 
   Folder, 
   FolderOpen,
@@ -12,8 +10,6 @@ import {
   Trash,
   FolderPlus,
   FilePlus,
-  RefreshCw,
-  FoldVertical,
   Copy,
   Scissors,
   Clipboard,
@@ -46,6 +42,7 @@ import { useIDE, IDEFileNode } from '@/contexts/IDEContext';
 import { fileSystemService } from '@/services/fileSystemService';
 import { terminalWorkspaceService } from '@/services/terminalWorkspaceService';
 import { TreeFolderPicker } from './TreeFolderPicker';
+import UniversalFileAccess from './UniversalFileAccess';
 import path from 'path-browserify';
 
 // NOTE: The local FileNode interface is removed. Using IDEFileNode from context.
@@ -403,16 +400,6 @@ const FileTreeNode: React.FC<FileTreeNodeProps> = ({
         onClick={handleNodeClick}
         onContextMenu={showContextMenu}
       >
-        {/* Expand/Collapse Chevron */}
-        {node.type === 'folder' && (
-          <div className="chevron-container p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" onClick={toggleExpand} title={isExpanded ? 'Collapse folder' : 'Expand folder'}>
-            {isExpanded ? (
-              <ChevronDown className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-            ) : (
-              <ChevronRight className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-            )}
-          </div>
-        )}
         
         {/* File/Folder Icon */}
         <div className="node-icon">
@@ -484,7 +471,7 @@ const FileExplorer: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [currentWorkingDir, setCurrentWorkingDir] = useState('DEV-OPAL');
-  const [viewMode, setViewMode] = useState<'local' | 'terminal'>('local');
+  const [viewMode, setViewMode] = useState<'local' | 'terminal' | 'universal' | 'none'>('none');
   const [terminalFiles, setTerminalFiles] = useState<IDEFileNode[]>([]);
   
   const { 
@@ -536,7 +523,7 @@ const FileExplorer: React.FC = () => {
     }
   };
 
-  const switchViewMode = async (mode: 'local' | 'terminal') => {
+  const switchViewMode = async (mode: 'local' | 'terminal' | 'universal' | 'none') => {
     setViewMode(mode);
     if (mode === 'terminal') {
       await loadTerminalFiles();
@@ -742,6 +729,11 @@ const FileExplorer: React.FC = () => {
   }, [handleRenameConfirm, handleRenameCancel, searchQuery]);
 
   const filteredFileTree = useCallback(() => {
+    // Return empty array if no view mode is selected
+    if (viewMode === 'none') {
+      return [];
+    }
+    
     let currentTree = viewMode === 'terminal' ? terminalFiles : fileTree;
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -770,16 +762,15 @@ const FileExplorer: React.FC = () => {
     <div className="file-explorer">
       <div className="explorer-header">
         <div className="section-title">
-          <ChevronDown className="w-4 h-4 chevron" />
           <span className="title-text">EXPLORER</span>
         </div>
         <div className="header-actions">
           <button 
-            className={`action-btn ${viewMode === 'local' ? 'bg-blue-600 text-white' : ''}`} 
-            onClick={() => switchViewMode('local')} 
-            title="Local Files"
+            className={`action-btn ${viewMode === 'universal' ? 'bg-green-600 text-white' : ''}`} 
+            onClick={() => switchViewMode('universal')} 
+            title="Local System Files"
           >
-            <Folder className="w-4 h-4" />
+            <FolderOpen className="w-4 h-4" />
           </button>
           <button 
             className={`action-btn ${viewMode === 'terminal' ? 'bg-blue-600 text-white' : ''} ${!terminalWorkspaceService.isConnected() ? 'opacity-50' : ''}`} 
@@ -788,21 +779,6 @@ const FileExplorer: React.FC = () => {
             disabled={!terminalWorkspaceService.isConnected()}
           >
             <Terminal className="w-4 h-4" />
-          </button>
-          <button className="action-btn" onClick={changeWorkingDirectory} title="Change Directory">
-            <FolderOpen className="w-4 h-4" />
-          </button>
-          <button className="action-btn" onClick={() => createFile()} title="New File">
-            <FilePlus className="w-4 h-4" />
-          </button>
-          <button className="action-btn" onClick={() => createFolder()} title="New Folder">
-            <FolderPlus className="w-4 h-4" />
-          </button>
-          <button className="action-btn" onClick={refreshFileTree} title="Refresh Explorer">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-          <button className="action-btn" onClick={collapseAll} title="Collapse All">
-            <FoldVertical className="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -815,7 +791,13 @@ const FileExplorer: React.FC = () => {
           />
       </div>
       <div className="tree-container">
-        {loading ? (
+        {viewMode === 'none' ? (
+          <div className="empty-state p-4 text-center text-gray-500 dark:text-gray-400">
+            <p className="text-sm">Select a file source above to browse files</p>
+          </div>
+        ) : viewMode === 'universal' ? (
+          <UniversalFileAccess />
+        ) : loading ? (
           <div className="loading-state">
             <Loader className="w-8 h-8 text-blue-500 animate-spin" />
             Loading file tree...
@@ -831,7 +813,7 @@ const FileExplorer: React.FC = () => {
                 onRename={handleRename}
                 onDelete={handleDelete}
                 onMove={handleMove}
-            onToggle={toggleFolder}
+            onToggle={() => {}}
                 onNewFile={handleNewFile}
                 onNewFolder={handleNewFolder}
             selectedId={selectedId}

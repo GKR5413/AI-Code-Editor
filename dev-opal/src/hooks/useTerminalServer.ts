@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { terminalConfig } from '@/config/terminal';
 
 interface ServerStatus {
   running: boolean;
@@ -16,7 +17,7 @@ export const useTerminalServer = (checkInterval = 5000) => {
   const checkServerHealth = useCallback(async () => {
     setStatus(prev => ({ ...prev, connecting: true }));
     try {
-      const response = await fetch('http://localhost:3001/health');
+      const response = await fetch(terminalConfig.HEALTH_ENDPOINT);
       if (response.ok) {
         setStatus({ running: true, connecting: false, error: null });
       } else {

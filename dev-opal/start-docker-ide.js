@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-console.log('🐳 Starting AI-IDE with Docker...');
+console.log('🐳 Starting VelocIDE with Docker...');
 console.log('This will build Docker images and start all services');
 
 // Function to run a command and return a promise
@@ -58,14 +58,14 @@ const startDockerIDE = async () => {
     await runCommand('docker-compose', ['up', '--build']);
     
   } catch (error) {
-    console.error('❌ Failed to start Docker IDE:', error.message);
+    console.error('❌ Failed to start VelocIDE Docker:', error.message);
     process.exit(1);
   }
 };
 
 // Handle process signals
 process.on('SIGINT', () => {
-  console.log('\n🛑 Shutting down Docker IDE...');
+  console.log('\n🛑 Shutting down VelocIDE Docker...');
   runCommand('docker-compose', ['down']).then(() => {
     process.exit(0);
   }).catch(() => {
