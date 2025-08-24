@@ -1,0 +1,13 @@
+Welcome to your AI-IDE terminal workspace!
+
+This is your isolated development environment.
+Feel free to create files, run commands, and experiment safely.
+
+Available tools:
+- Node.js & npm
+- Python 3
+- Git
+- Build tools (gcc, g++, make)
+- Text editors (vim, nano)
+
+Happy coding!
