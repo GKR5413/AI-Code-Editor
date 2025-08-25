@@ -14,12 +14,16 @@ import {
   Zap
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useIDE } from '@/contexts/IDEContext';
 
 export const TopBar: React.FC = () => {
   const { theme, toggleTheme } = useTheme();
+  const { logout } = useAuth();
+  const navigate = useNavigate();
   const { 
     activeTab, 
     saveAll, 
@@ -149,6 +153,21 @@ export const TopBar: React.FC = () => {
         
         <Button variant="ghost" size="sm" className="text-md-on-surface-variant hover:text-md-on-surface">
           <Settings size={16} />
+        </Button>
+
+        <Button 
+          variant="outline" 
+          size="sm" 
+          className="text-red-600 border-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+          onClick={async () => {
+            try {
+              await logout();
+            } finally {
+              navigate('/auth/login', { replace: true });
+            }
+          }}
+        >
+          Logout
         </Button>
       </div>
     </header>

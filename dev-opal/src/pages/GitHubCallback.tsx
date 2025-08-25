@@ -35,9 +35,8 @@ export default function GitHubCallback() {
         setStatus('success');
         
         // Redirect to main page after successful authentication
-        setTimeout(() => {
-          navigate('/');
-        }, 2000);
+        // Replace the current history entry instead of adding a new one
+        navigate('/', { replace: true });
       } catch (err) {
         setStatus('error');
         setError(err instanceof Error ? err.message : 'Authentication failed');

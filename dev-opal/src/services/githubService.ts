@@ -59,14 +59,20 @@ class GitHubService {
 
   async authenticate(code: string): Promise<GitHubUser> {
     try {
-      const auth = createOAuthUserAuth({
-        clientId: this.CLIENT_ID,
-        clientSecret: 'your_github_client_secret', // You'll need to create this
-        code,
-        redirectUri: this.REDIRECT_URI,
+      // Exchange code for access token using your backend endpoint
+      const response = await fetch('/api/auth/github/callback', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ code }),
       });
 
-      const { token } = await auth({ type: 'oauth-user' });
+      if (!response.ok) {
+        throw new Error('Failed to exchange code for token');
+      }
+
+      const { token } = await response.json();
       
       this.octokit = new Octokit({
         auth: token,
@@ -106,11 +112,25 @@ class GitHubService {
       this.user = JSON.parse(userStr);
 
       // Verify token is still valid
-      await this.octokit.users.getAuthenticated();
+      const { data: user } = await this.octokit.users.getAuthenticated();
+      
+      // Update user data in case it changed
+      this.user = {
+        id: user.id,
+        login: user.login,
+        name: user.name || user.login,
+        avatar_url: user.avatar_url,
+        email: user.email || '',
+      };
+      localStorage.setItem('github_user', JSON.stringify(this.user));
+      
       return this.user;
     } catch (error) {
       console.error('Failed to restore GitHub session:', error);
-      this.logout();
+      // Only logout if it's an authentication error
+      if (error.status === 401) {
+        this.logout();
+      }
       return null;
     }
   }

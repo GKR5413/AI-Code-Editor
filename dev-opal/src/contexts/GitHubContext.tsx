@@ -114,7 +114,8 @@ export const GitHubProvider: React.FC<GitHubProviderProps> = ({ children }) => {
 
   const login = () => {
     const authUrl = githubService.getAuthUrl();
-    window.location.href = authUrl;
+    // Replace the state instead of modifying history
+    window.location.replace(authUrl);
   };
 
   const logout = () => {

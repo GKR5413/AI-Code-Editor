@@ -31,25 +31,45 @@ VelocIDE - A modern, web-based integrated development environment with container
 - **Git**
 
 ### Installation
+
+#### Quick Setup with Authentication
 ```bash
 # Clone the repository
 git clone https://github.com/GKR5413/VelocIDE.git
 cd VelocIDE
 
-# Install dependencies
+# Install main dependencies
 npm install
+
+# Setup authentication service
+./setup-auth.sh
+
+# Install compiler service dependencies
 cd compiler-service && npm install && cd ..
 
-# Build Docker images
+# Build Docker images (optional for containerized development)
 ./build-terminal-image.sh
 docker-compose build
 
-# Start the IDE
-npm run dev &
-node docker-terminal-server.js &
-cd compiler-service && node server.js &
+# Start all services (IDE + Auth + Terminal + Compiler)
+npm run dev:full
 
-# Access at http://localhost:5173
+# Access VelocIDE at http://localhost:8080
+```
+
+#### Manual Setup
+```bash
+# Install auth service dependencies
+cd auth-service && npm install && cd ..
+
+# Copy environment configuration
+cp auth-service/.env.example auth-service/.env
+
+# Edit auth-service/.env with your GitHub OAuth credentials
+# Start services individually
+npm run dev          # Frontend (port 8080)
+npm run auth:dev     # Authentication service (port 3010)
+npm run terminal     # Terminal service (port 3006)
 ```
 
 ## 🏗️ Architecture
@@ -62,8 +82,9 @@ cd compiler-service && node server.js &
 - **Tailwind CSS** - Utility-first styling with Material Design 3
 
 ### Backend Services
-- **Terminal Service** (Port 3001) - WebSocket-based terminal sessions
-- **Compiler Service** (Port 3004) - Code compilation and execution
+- **Terminal Service** (Port 3003) - WebSocket-based terminal sessions
+- **Compiler Service** (Port 3002) - Code compilation and execution
+- **Auth Service** (Port 3010) - GitHub OAuth + manual authentication
 - **File System API** - RESTful file operations with workspace integration
 
 ### Infrastructure
@@ -171,12 +192,13 @@ docker-compose up
 ### Environment Configuration
 ```bash
 # Copy environment template
-cp .env.docker .env
+cp .env.local.example .env.local
 
 # Configure services
-DOCKER_TERMINAL_PORT=3001
-COMPILER_SERVICE_PORT=3004
-FRONTEND_PORT=5173
+DOCKER_TERMINAL_PORT=3003
+COMPILER_SERVICE_PORT=3002
+AUTH_SERVICE_PORT=3010
+FRONTEND_PORT=8080
 ```
 
 ## 🔒 Security Features

@@ -176,6 +176,11 @@ const FileTreeNode: React.FC<FileTreeNodeProps> = ({
   const handleNodeClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onSelect(node);
+    
+    // If clicking on a folder, also toggle its expansion
+    if (node.type === 'folder') {
+      toggleExpand(e);
+    }
   };
 
   const toggleExpand = (e: React.MouseEvent) => {
@@ -523,6 +528,40 @@ const FileExplorer: React.FC = () => {
     }
   };
 
+  const loadFolderContents = async (folderNode: IDEFileNode) => {
+    if (!terminalWorkspaceService.isConnected() || folderNode.type !== 'folder') return;
+    
+    try {
+      const files = await terminalWorkspaceService.getFiles(folderNode.path);
+      
+      // Update the specific folder's children in the tree
+      const updateFolderChildren = (nodes: IDEFileNode[]): IDEFileNode[] => {
+        return nodes.map(node => {
+          if (node.id === folderNode.id) {
+            return {
+              ...node,
+              children: files
+            };
+          } else if (node.children && node.children.length > 0) {
+            return {
+              ...node,
+              children: updateFolderChildren(node.children)
+            };
+          }
+          return node;
+        });
+      };
+      
+      if (viewMode === 'terminal') {
+        setTerminalFiles(updateFolderChildren(terminalFiles));
+      } else {
+        setFileTree(updateFolderChildren(fileTree));
+      }
+    } catch (error) {
+      console.error('Failed to load folder contents:', error);
+    }
+  };
+
   const switchViewMode = async (mode: 'local' | 'terminal' | 'universal' | 'none') => {
     setViewMode(mode);
     if (mode === 'terminal') {
@@ -813,7 +852,7 @@ const FileExplorer: React.FC = () => {
                 onRename={handleRename}
                 onDelete={handleDelete}
                 onMove={handleMove}
-            onToggle={() => {}}
+            onToggle={toggleFolder}
                 onNewFile={handleNewFile}
                 onNewFolder={handleNewFolder}
             selectedId={selectedId}

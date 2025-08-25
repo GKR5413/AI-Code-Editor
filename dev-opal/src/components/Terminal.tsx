@@ -7,9 +7,9 @@ import '@xterm/xterm/css/xterm.css';
 
 // Temporary hardcoded configuration for testing
 const terminalConfig = {
-  WEBSOCKET_URL: 'ws://localhost:3003',
-  API_BASE_URL: 'http://localhost:3003',
-  HEALTH_ENDPOINT: 'http://localhost:3003/health',
+  WEBSOCKET_URL: 'ws://localhost:3006',
+  API_BASE_URL: 'http://localhost:3006',
+  HEALTH_ENDPOINT: 'http://localhost:3006/health',
   RECONNECT_DELAY: 3000,
   CONNECTION_TIMEOUT: 10000,
 };

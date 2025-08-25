@@ -100,6 +100,35 @@ services:
       retries: 3
       start_period: 40s
 
+  # Authentication Service (GitHub OAuth + manual auth)
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    image: velocide-auth:latest
+    environment:
+      - NODE_ENV=production
+      - AUTH_PORT=3010
+      - FRONTEND_URL=http://localhost:8080
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - GITHUB_CALLBACK_URL=http://localhost:3010/auth/github/callback
+      - SESSION_SECRET=${SESSION_SECRET:-change-me}
+      - JWT_SECRET=${JWT_SECRET:-change-me}
+    ports:
+      - "3010:3010"
+    volumes:
+      - ./auth-service/database:/app/database
+    networks:
+      - ide-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   # Redis for caching (optional - for future use)
   redis:
     image: redis:7-alpine
