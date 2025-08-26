@@ -41,7 +41,6 @@ import { Input } from '@/components/ui/input';
 import { useIDE, IDEFileNode } from '@/contexts/IDEContext';
 import { fileSystemService } from '@/services/fileSystemService';
 import { terminalWorkspaceService } from '@/services/terminalWorkspaceService';
-import { TreeFolderPicker } from './TreeFolderPicker';
 import UniversalFileAccess from './UniversalFileAccess';
 import path from 'path-browserify';
 
@@ -474,10 +473,9 @@ const FileExplorer: React.FC = () => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['.']));
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
-  const [showFolderPicker, setShowFolderPicker] = useState(false);
-  const [currentWorkingDir, setCurrentWorkingDir] = useState('DEV-OPAL');
   const [viewMode, setViewMode] = useState<'local' | 'terminal' | 'universal' | 'none'>('none');
   const [terminalFiles, setTerminalFiles] = useState<IDEFileNode[]>([]);
+  const [lastManualRefresh, setLastManualRefresh] = useState<number>(Date.now());
   
   const { 
     files, 
@@ -488,7 +486,6 @@ const FileExplorer: React.FC = () => {
     deleteNode,
     refreshFileTree,
     loadNodeChildren,
-    saveAll
   } = useIDE();
 
   const [fileTree, setFileTree] = useState<IDEFileNode[]>(files);
@@ -514,53 +511,168 @@ const FileExplorer: React.FC = () => {
     };
   }, []);
 
+  // Listen for terminal command executions to auto-refresh workspace files
+  useEffect(() => {
+    const handleTerminalCommand = async () => {
+      // Only auto-refresh if we're currently viewing the terminal workspace
+      if (viewMode === 'terminal' && terminalWorkspaceService.isConnected()) {
+        // Only auto-refresh if it's been more than 5 seconds since last manual refresh
+        const timeSinceManualRefresh = Date.now() - lastManualRefresh;
+        if (timeSinceManualRefresh > 5000) {
+          console.log('🔄 Auto-refresh after terminal command (manual refresh was', Math.round(timeSinceManualRefresh/1000), 'seconds ago)');
+          setTimeout(() => {
+            loadTerminalFiles();
+          }, 2000); // Increased from 500ms to 2 seconds
+        } else {
+          console.log('🔄 Skipping auto-refresh (manual refresh was', Math.round(timeSinceManualRefresh/1000), 'seconds ago)');
+        }
+      }
+    };
+
+    window.addEventListener('terminalCommandExecuted', handleTerminalCommand as EventListener);
+    
+    return () => {
+      window.removeEventListener('terminalCommandExecuted', handleTerminalCommand as EventListener);
+    };
+  }, [viewMode, lastManualRefresh]);
+
+  // Set up terminal workspace change listener
+  useEffect(() => {
+    if (viewMode === 'terminal' && terminalWorkspaceService.isConnected()) {
+      const refreshHandler = () => {
+        // Only auto-refresh if it's been more than 10 seconds since last manual refresh
+        const timeSinceManualRefresh = Date.now() - lastManualRefresh;
+        if (timeSinceManualRefresh > 10000) {
+          console.log('🔄 Auto-refresh from polling (manual refresh was', Math.round(timeSinceManualRefresh/1000), 'seconds ago)');
+          loadTerminalFiles();
+        } else {
+          console.log('🔄 Skipping polling refresh (manual refresh was', Math.round(timeSinceManualRefresh/1000), 'seconds ago)');
+        }
+      };
+      
+      terminalWorkspaceService.addChangeListener(refreshHandler);
+      terminalWorkspaceService.startPolling(30000); // Poll every 30 seconds instead of 10
+      
+      return () => {
+        terminalWorkspaceService.removeChangeListener(refreshHandler);
+        terminalWorkspaceService.stopPolling();
+      };
+    }
+  }, [viewMode, lastManualRefresh]);
+
+  // Keyboard shortcuts for view mode switching
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Ctrl/Cmd + Shift + T for Terminal workspace
+      if (event.ctrlKey || event.metaKey) {
+        if (event.shiftKey && event.key === 'T') {
+          event.preventDefault();
+          if (terminalWorkspaceService.isConnected()) {
+            switchViewMode(viewMode === 'terminal' ? 'universal' : 'terminal');
+          }
+        }
+        // Ctrl/Cmd + Shift + L for Local files
+        else if (event.shiftKey && event.key === 'L') {
+          event.preventDefault();
+          switchViewMode(viewMode === 'universal' ? 'none' : 'universal');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [viewMode]);
+
   const loadTerminalFiles = async () => {
     if (!terminalWorkspaceService.isConnected()) return;
     
     try {
       setLoading(true);
+      console.log('🔄 Loading terminal files from root...');
       const files = await terminalWorkspaceService.getFiles();
-      setTerminalFiles(files);
+      console.log('✅ Terminal files loaded:', files);
+      
+      // Preserve expanded state and children when refreshing
+      setTerminalFiles(currentFiles => {
+        if (currentFiles.length === 0) {
+          return files; // First load, no state to preserve
+        }
+        
+        // Check if files have actually changed to avoid unnecessary updates
+        if (!hasFileTreeChanged(currentFiles, files)) {
+          console.log('🔄 No changes detected, preserving existing state');
+          return currentFiles;
+        }
+        
+        console.log('🔄 Changes detected, merging with existing state');
+        // Merge new files with existing expanded state
+        return mergeFileTrees(currentFiles, files);
+      });
     } catch (error) {
-      console.error('Failed to load terminal files:', error);
+      console.error('❌ Failed to load terminal files:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadFolderContents = async (folderNode: IDEFileNode) => {
-    if (!terminalWorkspaceService.isConnected() || folderNode.type !== 'folder') return;
+  // Helper function to merge file trees while preserving expanded state
+  const mergeFileTrees = (existingTree: IDEFileNode[], newTree: IDEFileNode[]): IDEFileNode[] => {
+    const existingMap = new Map<string, IDEFileNode>();
     
-    try {
-      const files = await terminalWorkspaceService.getFiles(folderNode.path);
-      
-      // Update the specific folder's children in the tree
-      const updateFolderChildren = (nodes: IDEFileNode[]): IDEFileNode[] => {
-        return nodes.map(node => {
-          if (node.id === folderNode.id) {
-            return {
-              ...node,
-              children: files
-            };
-          } else if (node.children && node.children.length > 0) {
-            return {
-              ...node,
-              children: updateFolderChildren(node.children)
-            };
-          }
-          return node;
-        });
-      };
-      
-      if (viewMode === 'terminal') {
-        setTerminalFiles(updateFolderChildren(terminalFiles));
-      } else {
-        setFileTree(updateFolderChildren(fileTree));
-      }
-    } catch (error) {
-      console.error('Failed to load folder contents:', error);
-    }
+    // Create a map of existing nodes by path
+    const buildMap = (nodes: IDEFileNode[]) => {
+      nodes.forEach(node => {
+        existingMap.set(node.path, node);
+        if (node.children) {
+          buildMap(node.children);
+        }
+      });
+    };
+    buildMap(existingTree);
+    
+    // Merge new tree with existing state
+    const mergeNodes = (nodes: IDEFileNode[]): IDEFileNode[] => {
+      return nodes.map(newNode => {
+        const existingNode = existingMap.get(newNode.path);
+        
+        if (existingNode) {
+          // Preserve existing state (expanded, children, etc.)
+          return {
+            ...newNode,
+            children: existingNode.children || (newNode.type === 'folder' ? [] : undefined),
+            loading: existingNode.loading || false
+          };
+        }
+        
+        // New node, initialize with default state
+        return {
+          ...newNode,
+          children: newNode.type === 'folder' ? [] : undefined,
+          loading: false
+        };
+      });
+    };
+    
+    return mergeNodes(newTree);
   };
+
+  // Check if file trees have actually changed to avoid unnecessary refreshes
+  const hasFileTreeChanged = (oldTree: IDEFileNode[], newTree: IDEFileNode[]): boolean => {
+    if (oldTree.length !== newTree.length) return true;
+    
+    // Simple path-based comparison since we don't have reliable timestamps
+    const oldPaths = new Set(oldTree.map(node => node.path));
+    const newPaths = new Set(newTree.map(node => node.path));
+    
+    if (oldPaths.size !== newPaths.size) return true;
+    
+    for (const path of oldPaths) {
+      if (!newPaths.has(path)) return true;
+    }
+    
+    return false;
+  };
+
 
   const switchViewMode = async (mode: 'local' | 'terminal' | 'universal' | 'none') => {
     setViewMode(mode);
@@ -584,7 +696,12 @@ const FileExplorer: React.FC = () => {
       if (viewMode === 'terminal') {
         // Load children from terminal workspace
         try {
-          children = await terminalWorkspaceService.getFiles(nodeToToggle.path);
+          console.log('🔄 Loading children for terminal folder:', nodeToToggle.path);
+          // Remove leading slash for API call
+          const relativePath = nodeToToggle.path.startsWith('/') ? nodeToToggle.path.slice(1) : nodeToToggle.path;
+          console.log('📁 API call with relative path:', relativePath);
+          children = await terminalWorkspaceService.getFiles(relativePath);
+          console.log('✅ Loaded children:', children);
         } catch (error) {
           console.error('Failed to load terminal folder children:', error);
           children = [];
@@ -615,14 +732,19 @@ const FileExplorer: React.FC = () => {
   }, [expanded, loadNodeChildren, viewMode]);
     
   const handleSelect = useCallback(async (node: IDEFileNode) => {
-    console.log('handleSelect called with node:', node);
+    console.log('🖱️ handleSelect called with node:', node);
     setSelectedId(node.id);
     if (node.type === 'file') {
-      console.log('Node is a file, calling openFile');
+      console.log('📄 Node is a file, calling openFile');
       if (viewMode === 'terminal') {
         // For terminal workspace files, we need to fetch content differently
         try {
-          const content = await terminalWorkspaceService.getFileContent(node.path);
+          console.log('🔍 Fetching content for terminal file:', node.path);
+          // Remove leading slash for API call
+          const relativePath = node.path.startsWith('/') ? node.path.slice(1) : node.path;
+          console.log('📁 API call with relative path:', relativePath);
+          const content = await terminalWorkspaceService.getFileContent(relativePath);
+          console.log('✅ File content loaded, length:', content.length);
           // Create a virtual file node with content for the editor
           const virtualNode = {
             ...node,
@@ -630,31 +752,23 @@ const FileExplorer: React.FC = () => {
           };
           await openFile(virtualNode);
         } catch (error) {
-          console.error('Failed to open terminal workspace file:', error);
+          console.error('❌ Failed to open terminal workspace file:', error);
         }
       } else {
         await openFile(node);
       }
     } else {
-      console.log('Node is not a file, type:', node.type);
+      console.log('📁 Node is not a file, type:', node.type);
     }
   }, [openFile, viewMode]);
 
   const handleNewFile = useCallback(async (parentNode: IDEFileNode) => {
-    const newName = await fileSystemService.promptForNewFileName(parentNode.path);
-    if (newName) {
-      await createFile(parentNode, newName);
-      refreshFileTree();
-    }
-  }, [createFile, refreshFileTree]);
+    await createFile(parentNode);
+  }, [createFile]);
 
   const handleNewFolder = useCallback(async (parentNode: IDEFileNode) => {
-    const newName = await fileSystemService.promptForNewFolderName(parentNode.path);
-    if (newName) {
-      await createFolder(parentNode, newName);
-      refreshFileTree();
-    }
-  }, [createFolder, refreshFileTree]);
+    await createFolder(parentNode);
+  }, [createFolder]);
 
   const handleRename = useCallback(async (node: IDEFileNode, newName: string) => {
     await renameNode(node, newName);
@@ -674,98 +788,16 @@ const FileExplorer: React.FC = () => {
   }, [refreshFileTree]);
 
   const handleRefresh = useCallback(async () => {
-    await refreshFileTree();
-  }, [refreshFileTree]);
-
-  const handleCopyPath = useCallback(async (node: IDEFileNode) => {
-    await fileSystemService.copyPath(node.path);
-  }, []);
-
-  const handleCopyRelativePath = useCallback(async (node: IDEFileNode) => {
-    await fileSystemService.copyRelativePath(node.path);
-  }, []);
-
-  const handleRevealInExplorer = useCallback(async (node: IDEFileNode) => {
-    await fileSystemService.revealInExplorer(node.path);
-  }, []);
-
-  const handleOpenGitChanges = useCallback(async (node: IDEFileNode) => {
-    await fileSystemService.openGitChanges(node.path);
-  }, []);
-
-  const handleDiscardChanges = useCallback(async (node: IDEFileNode) => {
-    await fileSystemService.discardChanges(node.path);
-  }, []);
-
-  const handleCopy = useCallback(async (source: IDEFileNode, target: IDEFileNode) => {
-    await fileSystemService.copyNode(source, target);
-  }, []);
-
-  const handleCut = useCallback(async (source: IDEFileNode, target: IDEFileNode) => {
-    await fileSystemService.cutNode(source, target);
-  }, []);
-
-  const handlePaste = useCallback(async (target: IDEFileNode) => {
-    await fileSystemService.pasteNode(target);
-  }, []);
-
-  const handleNewFileFromContext = useCallback((action: string, node: IDEFileNode) => {
-    if (action === 'newFile') {
-      handleNewFile(node);
-    } else if (action === 'newFolder') {
-      handleNewFolder(node);
+    if (viewMode === 'terminal') {
+      console.log('🔄 Manual refresh requested');
+      setLastManualRefresh(Date.now());
+      await loadTerminalFiles();
+    } else {
+      await refreshFileTree();
     }
-  }, [handleNewFile, handleNewFolder]);
+  }, [viewMode, loadTerminalFiles, refreshFileTree]);
 
-  const handleContextAction = useCallback((action: string, node: IDEFileNode) => {
-    if (action === 'rename') {
-      setSelectedId(node.id); // Start renaming
-    } else if (action === 'delete') {
-      handleDelete(node);
-    } else if (action === 'copyPath') {
-      handleCopyPath(node);
-    } else if (action === 'copyRelativePath') {
-      handleCopyRelativePath(node);
-    } else if (action === 'revealInExplorer') {
-      handleRevealInExplorer(node);
-    } else if (action === 'openGitChanges') {
-      handleOpenGitChanges(node);
-    } else if (action === 'discardChanges') {
-      handleDiscardChanges(node);
-    } else if (action === 'copy') {
-      handleCopy(node, node); // Copy self
-    } else if (action === 'cut') {
-      handleCut(node, node); // Cut self
-    } else if (action === 'paste') {
-      handlePaste(node);
-    }
-  }, [handleDelete, handleCopyPath, handleCopyRelativePath, handleRevealInExplorer, handleOpenGitChanges, handleDiscardChanges, handleCopy, handleCut, handlePaste]);
 
-  const handleRenameConfirm = useCallback((newName: string) => {
-    if (selectedId) {
-      const node = fileTree.find(f => f.id === selectedId);
-      if (node) {
-        handleRename(node, newName);
-      }
-    }
-  }, [selectedId, fileTree, handleRename]);
-
-  const handleRenameCancel = useCallback(() => {
-    if (selectedId) {
-      const node = fileTree.find(f => f.id === selectedId);
-      if (node) {
-        setSelectedId(node.id); // Revert to original name
-      }
-    }
-  }, [selectedId, fileTree]);
-
-  const handleRenameKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleRenameConfirm(searchQuery); // Use searchQuery as newName for now
-    } else if (e.key === 'Escape') {
-      handleRenameCancel();
-    }
-  }, [handleRenameConfirm, handleRenameCancel, searchQuery]);
 
   const filteredFileTree = useCallback(() => {
     // Return empty array if no view mode is selected
@@ -785,40 +817,57 @@ const FileExplorer: React.FC = () => {
     return currentTree;
   }, [fileTree, terminalFiles, searchQuery, viewMode]);
 
-  const changeWorkingDirectory = () => {
-    setShowFolderPicker(true);
-  };
-
-  const handleFolderSelect = async (folderPath: string) => {
-    // ... (logic to call backend and refresh tree)
-  };
-
-  const collapseAll = () => {
-    setExpanded(new Set());
-  };
 
   return (
     <div className="file-explorer">
       <div className="explorer-header">
         <div className="section-title">
           <span className="title-text">EXPLORER</span>
+          {viewMode === 'terminal' && (
+            <span className="ml-2 px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded-md">
+              Terminal Workspace
+            </span>
+          )}
+          {viewMode === 'universal' && (
+            <span className="ml-2 px-2 py-1 text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 rounded-md">
+              Local Files
+            </span>
+          )}
         </div>
         <div className="header-actions">
           <button 
-            className={`action-btn ${viewMode === 'universal' ? 'bg-green-600 text-white' : ''}`} 
+            className={`action-btn hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${viewMode === 'universal' ? 'bg-green-600 text-white shadow-md' : 'text-gray-600 dark:text-gray-300'}`} 
             onClick={() => switchViewMode('universal')} 
-            title="Local System Files"
+            title="Browse Local System Files (Ctrl+Shift+L)"
           >
             <FolderOpen className="w-4 h-4" />
           </button>
           <button 
-            className={`action-btn ${viewMode === 'terminal' ? 'bg-blue-600 text-white' : ''} ${!terminalWorkspaceService.isConnected() ? 'opacity-50' : ''}`} 
+            className={`action-btn hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${viewMode === 'terminal' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-600 dark:text-gray-300'} ${!terminalWorkspaceService.isConnected() ? 'opacity-50 cursor-not-allowed' : ''}`} 
             onClick={() => switchViewMode('terminal')} 
-            title="Terminal Workspace"
+            title={terminalWorkspaceService.isConnected() ? "Browse Terminal Workspace Files (Ctrl+Shift+T)" : "Terminal workspace not connected"}
             disabled={!terminalWorkspaceService.isConnected()}
           >
             <Terminal className="w-4 h-4" />
           </button>
+          {viewMode !== 'none' && (
+            <button 
+              className="action-btn text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" 
+              onClick={handleRefresh} 
+              title="Refresh file tree"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          )}
+          {viewMode !== 'none' && (
+            <button 
+              className="action-btn text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" 
+              onClick={() => switchViewMode('none')} 
+              title="Close file browser"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
       <div className="search-bar">
@@ -841,6 +890,18 @@ const FileExplorer: React.FC = () => {
             <Loader className="w-8 h-8 text-blue-500 animate-spin" />
             Loading file tree...
         </div>
+        ) : filteredFileTree().length === 0 && viewMode === 'terminal' && !terminalWorkspaceService.isConnected() ? (
+          <div className="empty-state p-4 text-center text-gray-500 dark:text-gray-400">
+            <Terminal className="w-8 h-8 mx-auto mb-2 text-gray-400" />
+            <p className="text-sm font-medium mb-1">Terminal workspace not connected</p>
+            <p className="text-xs">Start a terminal session to browse workspace files</p>
+          </div>
+        ) : filteredFileTree().length === 0 && viewMode === 'terminal' ? (
+          <div className="empty-state p-4 text-center text-gray-500 dark:text-gray-400">
+            <FolderOpen className="w-8 h-8 mx-auto mb-2 text-gray-400" />
+            <p className="text-sm font-medium mb-1">Terminal workspace is empty</p>
+            <p className="text-xs">Files created in the terminal will appear here</p>
+          </div>
         ) : (
           <div className="tree-view">
             {filteredFileTree().map(node => (
@@ -862,12 +923,6 @@ const FileExplorer: React.FC = () => {
           </div>
         )}
       </div>
-      <TreeFolderPicker
-        isOpen={showFolderPicker}
-        onClose={() => setShowFolderPicker(false)}
-        onSelect={handleFolderSelect}
-        initialPath="/Users/spider_myan/Documents"
-      />
     </div>
   );
 };

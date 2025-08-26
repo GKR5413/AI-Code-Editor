@@ -20,8 +20,8 @@ export const ENV_CONFIG = {
   
   // Frontend configuration
   FRONTEND: {
-    PORT: 8080,
-    DEV_SERVER_URL: 'http://localhost:8080',
+    PORT: 5173,
+    DEV_SERVER_URL: 'http://localhost:5173',
   },
   
   // Docker configuration

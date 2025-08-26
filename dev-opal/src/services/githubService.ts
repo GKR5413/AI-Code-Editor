@@ -53,9 +53,10 @@ class GitHubService {
   private octokit: Octokit | null = null;
   private user: GitHubUser | null = null;
 
-  // GitHub OAuth App configuration
+  // GitHub OAuth App configuration - Note: This service is not used for auth
+  // Auth is handled by the auth service backend
   private readonly CLIENT_ID = 'your_github_client_id'; // You'll need to create this
-  private readonly REDIRECT_URI = 'http://localhost:8080/github/callback';
+  private readonly REDIRECT_URI = 'http://localhost:5173/github/callback';
 
   async authenticate(code: string): Promise<GitHubUser> {
     try {

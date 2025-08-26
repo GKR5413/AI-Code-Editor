@@ -47,12 +47,8 @@ npm install
 # Install compiler service dependencies
 cd compiler-service && npm install && cd ..
 
-# Build Docker images (optional for containerized development)
-./build-terminal-image.sh
-docker-compose build
-
-# Start all services (IDE + Auth + Terminal + Compiler)
-npm run dev:full
+# Build and start Docker services
+docker-compose up --build
 
 # Access VelocIDE at http://localhost:8080
 ```
@@ -67,9 +63,8 @@ cp auth-service/.env.example auth-service/.env
 
 # Edit auth-service/.env with your GitHub OAuth credentials
 # Start services individually
-npm run dev          # Frontend (port 8080)
+npm run dev          # Frontend (port 5173)
 npm run auth:dev     # Authentication service (port 3010)
-npm run terminal     # Terminal service (port 3006)
 ```
 
 ## 🏗️ Architecture
@@ -100,19 +95,18 @@ VelocIDE/
 │   ├── components/
 │   │   ├── CodeEditor.tsx      # Monaco editor integration
 │   │   ├── FileExplorer.tsx    # File tree with terminal sync
-│   │   ├── Terminal.tsx        # Containerized terminal
+│   │   ├── TerminalTabs.tsx    # Terminal tab management
+│   │   ├── DirectTerminal.tsx  # Real Docker terminal (ttyd)
+│   │   ├── CompilerTerminal.tsx # Interactive code execution terminal
 │   │   └── CompilerPanel.tsx   # Code execution interface
 │   ├── contexts/
 │   │   └── IDEContext.tsx      # IDE state management
 │   ├── services/
-│   │   ├── terminalWorkspaceService.ts  # Terminal file integration
 │   │   ├── compilerService.ts           # Code compilation
 │   │   └── fileSystemService.ts         # File operations
 │   └── pages/
 │       └── Index.tsx           # Main IDE layout
 ├── compiler-service/           # Backend compiler service
-├── docker-terminal-server.js   # Terminal WebSocket server
-├── terminal-workspaces/        # Docker workspace volumes
 └── docker-compose.yml         # Container orchestration
 ```
 
@@ -133,15 +127,13 @@ VelocIDE/
 
 ## 🔧 API Reference
 
-### Terminal Service (ws://localhost:3001)
+### Terminal Service
+- **Direct Terminal**: Real Docker container terminal via ttyd (port 7681)
+- **Docker Terminal Service**: WebSocket terminal service (ws://localhost:3003)
+
 ```javascript
 // WebSocket connection for terminal I/O
 ws.send(JSON.stringify({ type: 'input', data: 'ls -la' }));
-
-// File system endpoints
-GET /workspace/:sessionId/files?path=<path>  // Browse files
-GET /workspace/:sessionId/content?path=<path> // Get file content
-GET /active-sessions                          // List active sessions
 ```
 
 ### Compiler Service (http://localhost:3004)

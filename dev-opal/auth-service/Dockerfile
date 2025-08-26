@@ -1,26 +1,28 @@
-FROM node:20-slim
+FROM node:20-alpine
 
 WORKDIR /app
 
-# System deps required to build sqlite3 native bindings
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       python3 make g++ build-essential libsqlite3-dev \
-    && rm -rf /var/lib/apt/lists/*
+# System deps required to build sqlite3 native bindings  
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    sqlite \
+    sqlite-dev \
+    linux-headers
 
 # Install deps separately for better layer caching
 COPY package*.json ./
-RUN npm ci --only=production \
-    && npm rebuild sqlite3 --build-from-source \
-    && npm cache clean --force
+RUN npm ci --only=production
 
 # Copy source
 COPY . .
 
-# Create database dir for SQLite sessions
-RUN mkdir -p /app/database && chown -R node:node /app
+# Rebuild sqlite3 for the current platform
+RUN npm rebuild sqlite3
 
-USER node
+# Create database dir for SQLite sessions
+RUN mkdir -p /app/database
 
 ENV NODE_ENV=production
 ENV AUTH_PORT=3010

@@ -600,13 +600,7 @@ app.use((error, req, res, next) => {
   });
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Endpoint not found'
-  });
-});
+
 
 // Handle interactive WebSocket messages
 async function handleInteractiveMessage(ws, sessionId, data) {
@@ -695,9 +689,15 @@ async function startInteractiveExecution(ws, sessionId, payload) {
     
     // Handle process output
     process.stdout.on('data', (data) => {
+      const output = data.toString();
+      // Check if this looks like an input prompt
+      const isPrompt = output.includes(':') || output.includes('?') || output.includes('>') || 
+                       output.toLowerCase().includes('enter') || output.toLowerCase().includes('input');
+      
       ws.send(JSON.stringify({
         type: 'stdout',
-        data: data.toString()
+        data: output,
+        isPrompt: isPrompt && !output.includes('\n') // Single line prompts are more likely to be input requests
       }));
     });
     
@@ -750,6 +750,150 @@ async function startInteractiveExecution(ws, sessionId, payload) {
   }
 }
 
+// Workspace file access endpoint
+app.post('/workspace/files', async (req, res) => {
+  try {
+    const { path: filePath, action, content } = req.body;
+    const workspacePath = '/workspace';
+    const fullPath = path.join(workspacePath, filePath || '');
+    
+    // Security check - ensure path is within workspace
+    const resolvedPath = path.resolve(fullPath);
+    const resolvedWorkspace = path.resolve(workspacePath);
+    
+    if (!resolvedPath.startsWith(resolvedWorkspace)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Access denied: Path outside workspace'
+      });
+    }
+    
+    switch (action) {
+      case 'list': {
+        try {
+          const stats = await fs.stat(resolvedPath);
+          if (stats.isDirectory()) {
+            const items = await fs.readdir(resolvedPath);
+            const files = [];
+            
+            for (const item of items) {
+              const itemPath = path.join(resolvedPath, item);
+              try {
+                const itemStats = await fs.stat(itemPath);
+                const relativePath = path.relative(workspacePath, itemPath);
+                
+                files.push({
+                  name: item,
+                  type: itemStats.isDirectory() ? 'directory' : 'file',
+                  size: itemStats.size,
+                  path: '/' + relativePath.replace(/\\/g, '/'),
+                  modified: itemStats.mtime.toISOString()
+                });
+              } catch (err) {
+                logger.warn(`Error getting stats for ${item}:`, err.message);
+              }
+            }
+            
+            res.json({ success: true, files });
+          } else {
+            res.status(400).json({
+              success: false,
+              error: 'Path is not a directory'
+            });
+          }
+        } catch (err) {
+          if (err.code === 'ENOENT') {
+            res.json({ success: true, files: [] });
+          } else {
+            throw err;
+          }
+        }
+        break;
+      }
+      
+      case 'read': {
+        try {
+          const stats = await fs.stat(resolvedPath);
+          if (stats.isFile()) {
+            const fileContent = await fs.readFile(resolvedPath, 'utf8');
+            res.json({ success: true, content: fileContent });
+          } else {
+            res.status(400).json({
+              success: false,
+              error: 'Path is not a file'
+            });
+          }
+        } catch (err) {
+          if (err.code === 'ENOENT') {
+            res.status(404).json({
+              success: false,
+              error: 'File not found'
+            });
+          } else {
+            throw err;
+          }
+        }
+        break;
+      }
+      
+      case 'write': {
+        try {
+          await fs.ensureDir(path.dirname(resolvedPath));
+          await fs.writeFile(resolvedPath, content || '', 'utf8');
+          res.json({ success: true });
+        } catch (err) {
+          throw err;
+        }
+        break;
+      }
+      
+      case 'mkdir': {
+        try {
+          await fs.ensureDir(resolvedPath);
+          res.json({ success: true });
+        } catch (err) {
+          throw err;
+        }
+        break;
+      }
+      
+      case 'delete': {
+        try {
+          await fs.remove(resolvedPath);
+          res.json({ success: true });
+        } catch (err) {
+          if (err.code === 'ENOENT') {
+            res.json({ success: true }); // Already deleted
+          } else {
+            throw err;
+          }
+        }
+        break;
+      }
+      
+      default:
+        res.status(400).json({
+          success: false,
+          error: 'Invalid action'
+        });
+    }
+  } catch (error) {
+    logger.error('Workspace file operation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// 404 handler - must be after all routes
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Endpoint not found'
+  });
+});
+
 // Initialize server
 const startServer = async () => {
   try {
@@ -762,6 +906,9 @@ const startServer = async () => {
       // Start WebSocket server for interactive execution
       wss = new WebSocket.Server({ port: 4002 }); // WebSocket on port 4002
       logger.info(`🔌 WebSocket server for interactive execution running on port 4002`);
+      
+      // Web terminal is handled by standalone container on port 7681
+      logger.info(`💻 Web terminal available via standalone container on port 7681`);
       
       wss.on('connection', (ws, req) => {
         const url = new URL(req.url, `http://${req.headers.host}`);
@@ -828,6 +975,218 @@ app.post('/api/run-interactive', async (req, res) => {
     sessionId,
     wsPort,
     message: 'Interactive session prepared. Connect via WebSocket.'
+  });
+});
+
+// Terminal-based execution endpoint
+app.post('/api/run-terminal', async (req, res) => {
+  const { language, code, filename, terminalId } = req.body;
+  
+  if (!language || !code) {
+    return res.status(400).json({
+      success: false,
+      error: 'Language and code are required'
+    });
+  }
+  
+  if (!LANGUAGES[language]) {
+    return res.status(400).json({
+      success: false,
+      error: `Unsupported language: ${language}`
+    });
+  }
+  
+  const sessionId = uuidv4();
+  const lang = LANGUAGES[language];
+  const actualFilename = filename || `main${lang.extension}`;
+  const workspaceDir = path.join('./workspace', sessionId);
+  const sourceFile = path.join(workspaceDir, actualFilename);
+  const outputFile = path.join('./output', sessionId, 'output');
+  
+  try {
+    // Create workspace directory
+    await fs.ensureDir(workspaceDir);
+    await fs.ensureDir(path.dirname(outputFile));
+    
+    // Write source code to file
+    await fs.writeFile(sourceFile, code, 'utf8');
+    
+    let executableFile = sourceFile;
+    
+    // Compile if necessary
+    if (lang.compile) {
+      const compileCommand = lang.compile(sourceFile, outputFile);
+      const compileResult = await executeCommand(compileCommand, {
+        timeout: lang.timeout,
+        cwd: workspaceDir
+      });
+      
+      if (!compileResult.success) {
+        return res.json({
+          success: false,
+          stage: 'compilation',
+          error: compileResult.error,
+          stdout: compileResult.stdout,
+          stderr: compileResult.stderr,
+          sessionId
+        });
+      }
+      
+      executableFile = outputFile;
+    }
+    
+    // Prepare command for terminal execution
+    const relativeFile = path.relative(workspaceDir, executableFile);
+    const runCommand = lang.run(relativeFile);
+    
+    // Send the command to the terminal via the terminal service
+    if (terminalId) {
+      try {
+        const terminalResponse = await fetch('http://localhost:3003/api/terminal/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            terminalId: terminalId,
+            command: `cd ${workspaceDir} && ${runCommand}`,
+            interactive: true
+          })
+        });
+        
+        if (terminalResponse.ok) {
+          res.json({
+            success: true,
+            stage: 'execution',
+            message: 'Program started in terminal',
+            sessionId,
+            workspaceDir,
+            command: runCommand
+          });
+        } else {
+          throw new Error('Failed to execute in terminal');
+        }
+      } catch (terminalError) {
+        // Fallback to regular execution if terminal service fails
+        logger.warn('Terminal execution failed, falling back to regular execution:', terminalError.message);
+        return res.json({
+          success: false,
+          error: 'Failed to execute in terminal. Terminal service may not be available.',
+          sessionId
+        });
+      }
+    } else {
+      res.json({
+        success: true,
+        stage: 'preparation',
+        message: 'Code prepared for terminal execution',
+        sessionId,
+        command: `cd ${workspaceDir} && ${runCommand}`,
+        workspaceDir
+      });
+    }
+    
+  } catch (error) {
+    logger.error(`Terminal execution preparation error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      stage: 'preparation',
+      error: error.message,
+      sessionId
+    });
+  }
+});
+
+// Check if program needs input (heuristic analysis)
+app.post('/api/analyze-input-needs', async (req, res) => {
+  const { language, code } = req.body;
+  
+  if (!language || !code) {
+    return res.status(400).json({
+      success: false,
+      error: 'Language and code are required'
+    });
+  }
+  
+  let needsInput = false;
+  let inputMethods = [];
+  
+  // Analyze code for input requirements
+  const codeLines = code.toLowerCase().split('\n');
+  
+  switch (language) {
+    case 'python':
+      needsInput = codeLines.some(line => 
+        line.includes('input(') || 
+        line.includes('raw_input(') || 
+        line.includes('sys.stdin.read')
+      );
+      if (needsInput) {
+        if (code.includes('input(')) inputMethods.push('input()');
+        if (code.includes('raw_input(')) inputMethods.push('raw_input()');
+        if (code.includes('sys.stdin')) inputMethods.push('sys.stdin');
+      }
+      break;
+      
+    case 'javascript':
+    case 'typescript':
+      needsInput = codeLines.some(line => 
+        line.includes('readline(') || 
+        line.includes('prompt(') || 
+        line.includes('process.stdin')
+      );
+      if (needsInput) {
+        if (code.includes('readline')) inputMethods.push('readline');
+        if (code.includes('prompt')) inputMethods.push('prompt');
+        if (code.includes('process.stdin')) inputMethods.push('process.stdin');
+      }
+      break;
+      
+    case 'java':
+      needsInput = codeLines.some(line => 
+        line.includes('scanner.') || 
+        line.includes('bufferedreader') || 
+        line.includes('system.in')
+      );
+      if (needsInput) {
+        if (code.includes('Scanner')) inputMethods.push('Scanner');
+        if (code.includes('BufferedReader')) inputMethods.push('BufferedReader');
+      }
+      break;
+      
+    case 'c':
+    case 'cpp':
+      needsInput = codeLines.some(line => 
+        line.includes('scanf') || 
+        line.includes('cin >>') || 
+        line.includes('getchar') ||
+        line.includes('fgets')
+      );
+      if (needsInput) {
+        if (code.includes('scanf')) inputMethods.push('scanf');
+        if (code.includes('cin')) inputMethods.push('cin');
+        if (code.includes('getchar')) inputMethods.push('getchar');
+      }
+      break;
+      
+    default:
+      // Generic check for common input patterns
+      needsInput = codeLines.some(line => 
+        line.includes('read') || 
+        line.includes('input') || 
+        line.includes('scanf') ||
+        line.includes('cin')
+      );
+  }
+  
+  res.json({
+    success: true,
+    needsInput,
+    inputMethods,
+    recommendation: needsInput ? 'terminal' : 'regular',
+    message: needsInput ? 
+      'This program requires user input. Consider using terminal mode for better interaction.' : 
+      'This program does not appear to require user input.'
   });
 });
 

@@ -65,6 +65,8 @@ services:
       dockerfile: Dockerfile.compiler
     ports:
       - "3002:3002"  # Compiler service
+      - "4002:4002"  # WebSocket for interactive execution
+      # - "7681:7681"  # ttyd web terminal (disabled - using standalone terminal)
     volumes:
       - ./compiler-service:/app
       - shared_workspace:/workspace      # Shared workspace access
@@ -109,7 +111,7 @@ services:
     environment:
       - NODE_ENV=production
       - AUTH_PORT=3010
-      - FRONTEND_URL=http://localhost:8080
+      - FRONTEND_URL=http://localhost:5173
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
       - GITHUB_CALLBACK_URL=http://localhost:3010/auth/github/callback
@@ -164,7 +166,7 @@ services:
     volumes:
       - ./lsp-server:/app
     ports:
-      - "3003:3003"
+      - "3004:3003"
     command: sh -c "npm install && npm start"
     networks:
       - ide-network

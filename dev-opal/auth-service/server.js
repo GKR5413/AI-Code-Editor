@@ -494,17 +494,29 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Get current user
-app.get('/api/user', requireAuth, (req, res) => {
-    console.log('📊 /api/user request received');
-    console.log('Auth header:', req.headers.authorization ? 'present' : 'missing');
-    console.log('User from token:', {
-        id: req.user?.id,
-        username: req.user?.username,
-        email: req.user?.email
-    });
-    
-    const { github_access_token, ...userWithoutToken } = req.user;
-    res.json({ user: userWithoutToken });
+app.get('/api/user', requireAuth, async (req, res) => {
+    try {
+        console.log('📊 /api/user request received');
+        console.log('Auth header:', req.headers.authorization ? 'present' : 'missing');
+        console.log('User from token:', {
+            id: req.user?.id,
+            username: req.user?.username,
+            email: req.user?.email
+        });
+        
+        // Fetch full user data from database
+        const fullUser = await database.getUserById(req.user.id);
+        if (!fullUser) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        // Remove sensitive fields
+        const { password_hash, github_access_token, ...userWithoutSensitive } = fullUser;
+        res.json({ user: userWithoutSensitive });
+    } catch (error) {
+        console.error('Get user error:', error);
+        res.status(500).json({ error: 'Failed to fetch user data' });
+    }
 });
 
 // Update user profile

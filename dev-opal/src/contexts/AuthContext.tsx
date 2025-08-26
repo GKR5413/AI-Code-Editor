@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
 import { Navigate } from 'react-router-dom';
 
 // Types
@@ -172,7 +171,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (existingToken && userData) {
         console.log('Found stored credentials, verifying with server...');
         try {
-          const user = JSON.parse(userData);
+          JSON.parse(userData); // Parse to validate JSON format
           
           // Verify token with server
           const response = await fetch(`${AUTH_API_URL}/api/user`, {
@@ -207,10 +206,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // No stored credentials, finish loading
         dispatch({ type: 'AUTH_LOGOUT' });
       }
+      
+      initializingRef.current = false;
     };
 
     initialize();
-  }, [markActivity]);
+  }, []); // Remove markActivity dependency to prevent infinite loops - GitHub OAuth fix
 
   // Idle timeout management: sign out after 5 minutes of inactivity
   useEffect(() => {
@@ -353,7 +354,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const resetPassword = async (email: string) => {
+  const resetPassword = async (_email: string) => {
     dispatch({ type: 'AUTH_START' });
     
     try {
@@ -391,6 +392,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const loginWithGitHub = () => {
+    // Clear any existing credentials before OAuth
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(USER_STORAGE_KEY);
+    dispatch({ type: 'AUTH_START' });
+    
     // Redirect to GitHub OAuth
     window.location.href = `${AUTH_API_URL}/auth/github`;
   };
@@ -416,6 +422,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     dispatch({ type: 'AUTH_SUCCESS', payload: { user, token } });
     
     console.log('✅ Auth state updated, should be authenticated now');
+    console.log('🔍 Current auth state after dispatch:', {
+      isAuthenticated: true,
+      hasUser: !!user,
+      hasToken: !!token
+    });
+    
     // Reset idle timer
     try { localStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString()); } catch {}
   };
@@ -456,8 +468,6 @@ interface ProtectedRouteProps {
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const { isAuthenticated, isLoading, user, token } = useAuth();
-  const location = useLocation();
-  const navigate = useNavigate();
   
   console.log('🔒 ProtectedRoute check:', {
     isAuthenticated,
@@ -468,6 +478,17 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     currentPath: window.location.pathname,
     userInfo: user ? { id: user.id, username: user.username } : 'none',
     timestamp: new Date().toISOString()
+  });
+  
+  // Additional debugging for auth state
+  console.log('🔍 Auth state details:', {
+    isAuthenticated,
+    isLoading,
+    hasUser: !!user,
+    localStorage: {
+      token: localStorage.getItem('velocide_auth_token') ? 'present' : 'missing',
+      user: localStorage.getItem('velocide_user') ? 'present' : 'missing'
+    }
   });
   
   if (isLoading) {
@@ -482,11 +503,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   }
   
   if (!isAuthenticated) {
+    console.log('❌ Not authenticated, redirecting to login');
     return <Navigate to="/auth/login" replace />;
   }
   
-  
-
+  console.log('✅ Authentication successful, rendering protected content');
   return <>{children}</>;
 };
 

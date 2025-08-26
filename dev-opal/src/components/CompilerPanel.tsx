@@ -50,6 +50,26 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
     execution: true,
     input: false
   });
+  const [waitingForInput, setWaitingForInput] = useState(false);
+  const [compilerTerminalRef, setCompilerTerminalRef] = useState<any>(null);
+
+  // Check for globally available compiler terminal reference
+  useEffect(() => {
+    const checkForTerminalRef = () => {
+      if ((window as any).compilerTerminalRef) {
+        setCompilerTerminalRef((window as any).compilerTerminalRef);
+      } else if ((window as any).compilerTerminal) {
+        setCompilerTerminalRef((window as any).compilerTerminal);
+      }
+    };
+    
+    checkForTerminalRef();
+    const interval = setInterval(checkForTerminalRef, 1000); // Check every second
+    
+    return () => clearInterval(interval);
+  }, []);
+  const [needsInput, setNeedsInput] = useState<boolean | null>(null);
+  const [inputAnalysis, setInputAnalysis] = useState<any>(null);
 
   // Check compiler service health and load languages
   useEffect(() => {
@@ -71,7 +91,7 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
     checkCompilerService();
   }, []);
 
-  // Auto-detect language from active file
+  // Auto-detect language from active file and analyze input needs
   useEffect(() => {
     if (activeTab && activeTab.path) {
       const detectedLanguage = compilerService.getLanguageFromExtension(activeTab.path);
@@ -79,7 +99,71 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
         setSelectedLanguage(detectedLanguage);
       }
     }
-  }, [activeTab, supportedLanguages]);
+    
+    // Analyze if code needs input
+    if (activeTab && activeTab.content && selectedLanguage) {
+      analyzeInputNeeds();
+    }
+  }, [activeTab, supportedLanguages, selectedLanguage]);
+
+  const analyzeInputNeeds = () => {
+    if (!activeTab || !activeTab.content) return;
+    
+    const code = activeTab.content.toLowerCase();
+    let needsInputDetected = false;
+    let inputMethods: string[] = [];
+    
+    // Simple heuristic analysis for common input patterns
+    switch (selectedLanguage) {
+      case 'python':
+        if (code.includes('input(')) {
+          needsInputDetected = true;
+          inputMethods.push('input()');
+        }
+        if (code.includes('raw_input(')) {
+          needsInputDetected = true;
+          inputMethods.push('raw_input()');
+        }
+        break;
+        
+      case 'javascript':
+      case 'typescript':
+        if (code.includes('prompt(') || code.includes('readline') || code.includes('process.stdin')) {
+          needsInputDetected = true;
+          inputMethods.push('prompt/readline');
+        }
+        break;
+        
+      case 'java':
+        if (code.includes('scanner') || code.includes('bufferedreader') || code.includes('system.in')) {
+          needsInputDetected = true;
+          inputMethods.push('Scanner/BufferedReader');
+        }
+        break;
+        
+      case 'c':
+      case 'cpp':
+        if (code.includes('scanf') || code.includes('cin >>') || code.includes('getchar')) {
+          needsInputDetected = true;
+          inputMethods.push('scanf/cin');
+        }
+        break;
+        
+      default:
+        // Generic check
+        if (code.includes('input') || code.includes('read') || code.includes('scanf') || code.includes('cin')) {
+          needsInputDetected = true;
+          inputMethods.push('input functions');
+        }
+    }
+    
+    setNeedsInput(needsInputDetected);
+    setInputAnalysis({
+      needsInput: needsInputDetected,
+      inputMethods,
+      recommendation: needsInputDetected ? 'terminal' : 'regular'
+    });
+  };
 
   const handleCompile = useCallback(async () => {
     if (!activeTab || !activeTab.content) {
@@ -119,6 +203,20 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
       return;
     }
 
+    // Check if code needs input and recommend terminal mode
+    if (needsInput && inputAnalysis?.recommendation === 'terminal') {
+      const useTerminal = confirm(
+        `This program requires user input (${inputAnalysis.inputMethods.join(', ')}). ` +
+        'Would you like to run it in the terminal for better interaction? ' +
+        'Click OK to open compiler terminal, or Cancel to run normally.'
+      );
+      
+      if (useTerminal) {
+        await handleRunInTerminal();
+        return;
+      }
+    }
+
     setIsRunning(true);
     setExecutionResult(null);
     
@@ -144,7 +242,50 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
     } finally {
       setIsRunning(false);
     }
-  }, [activeTab, selectedLanguage, input]);
+  }, [activeTab, selectedLanguage, input, needsInput, inputAnalysis]);
+
+  const handleRunInTerminal = useCallback(async () => {
+    if (!activeTab || !activeTab.content) {
+      alert('No code to run. Please open a file first.');
+      return;
+    }
+
+    console.log('🚀 Starting real terminal execution...');
+    setIsRunning(true);
+    setExecutionResult(null);
+    
+    // Open the compiler terminal first
+    if ((window as any).switchToCompilerTerminal) {
+      (window as any).switchToCompilerTerminal();
+    }
+    
+    try {
+      if (compilerTerminalRef && compilerTerminalRef.executeProgram) {
+        // Use the real terminal execution
+        await compilerTerminalRef.executeProgram(selectedLanguage, activeTab.content, activeTab.name);
+        
+        setExecutionResult({
+          success: true,
+          stage: 'execution',
+          message: 'Program running in Docker terminal',
+          stdout: 'Program is running in the terminal below. Interact with it directly.'
+        });
+      } else {
+        throw new Error('Compiler terminal not available');
+      }
+      
+    } catch (error) {
+      console.error('❌ Terminal execution error:', error);
+      setExecutionResult({
+        success: false,
+        stage: 'execution',
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      });
+    } finally {
+      setIsRunning(false);
+    }
+  }, [activeTab, selectedLanguage, compilerTerminalRef]);
+
 
   const handleRunInteractive = useCallback(async () => {
     if (!activeTab || !activeTab.content) {
@@ -152,6 +293,7 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
       return;
     }
 
+    console.log('🚀 Starting interactive execution...');
     setIsRunning(true);
     setIsInteractive(true);
     setInteractiveOutput([]);
@@ -160,10 +302,17 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
     try {
       // Connect to WebSocket for interactive execution
       const sessionId = Date.now().toString();
-      const ws = new WebSocket(`ws://localhost:4002?sessionId=${sessionId}`);
+      console.log('🔌 Connecting to WebSocket with sessionId:', sessionId);
+      // Use the correct WebSocket URL based on environment
+      const wsUrl = window.location.hostname === 'localhost' 
+        ? `ws://localhost:4002?sessionId=${sessionId}`
+        : `ws://${window.location.hostname}:4002?sessionId=${sessionId}`;
+      const ws = new WebSocket(wsUrl);
       setWsConnection(ws);
       
       ws.onopen = () => {
+        console.log('✅ WebSocket connected successfully');
+        setInteractiveOutput(prev => [...prev, '🔌 Connected to interactive execution server...']);
         // Start interactive execution
         ws.send(JSON.stringify({
           type: 'start',
@@ -173,27 +322,31 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
             filename: activeTab.name
           }
         }));
+        console.log('📤 Sent start command');
       };
       
       ws.onmessage = (event) => {
+        console.log('📨 Received WebSocket message:', event.data);
         const data = JSON.parse(event.data);
         handleInteractiveMessage(data);
       };
       
       ws.onclose = () => {
+        console.log('🔌 WebSocket connection closed');
         setIsRunning(false);
         setIsInteractive(false);
         setWsConnection(null);
       };
       
       ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setInteractiveOutput(prev => [...prev, `WebSocket error: ${error}`]);
+        console.error('❌ WebSocket error:', error);
+        setInteractiveOutput(prev => [...prev, `❌ WebSocket error: ${error}`]);
         setIsRunning(false);
         setIsInteractive(false);
       };
       
     } catch (error) {
+      console.error('❌ Interactive execution error:', error);
       setExecutionResult({
         success: false,
         stage: 'execution',
@@ -205,17 +358,33 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
   }, [activeTab, selectedLanguage]);
 
   const handleInteractiveMessage = (data: any) => {
+    console.log('🔄 Processing message type:', data.type, data);
     switch (data.type) {
       case 'started':
+        console.log('✅ Interactive execution started');
         setInteractiveOutput(prev => [...prev, '🚀 Interactive execution started...']);
         break;
       case 'stdout':
+        console.log('📤 stdout:', data.data);
         setInteractiveOutput(prev => [...prev, data.data]);
+        // Check if this is a prompt waiting for input
+        if (data.isPrompt) {
+          setWaitingForInput(true);
+          // Auto-focus the input field when waiting for input
+          setTimeout(() => {
+            const inputField = document.querySelector('.interactive-input input') as HTMLInputElement;
+            if (inputField) {
+              inputField.focus();
+            }
+          }, 100);
+        }
         break;
       case 'stderr':
+        console.log('⚠️ stderr:', data.data);
         setInteractiveOutput(prev => [...prev, `❌ ${data.data}`]);
         break;
       case 'exit':
+        console.log('🏁 Program exited with code:', data.code);
         setInteractiveOutput(prev => [...prev, `✅ Program finished with exit code ${data.code}`]);
         setIsRunning(false);
         setIsInteractive(false);
@@ -225,19 +394,26 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
         }
         break;
       case 'error':
+        console.error('❌ Execution error:', data.message);
         setInteractiveOutput(prev => [...prev, `❌ Error: ${data.message}`]);
         break;
+      default:
+        console.warn('❓ Unknown message type:', data.type);
     }
   };
 
   const sendInteractiveInput = () => {
     if (wsConnection && interactiveInput) {
+      console.log('📤 Sending input:', interactiveInput);
       wsConnection.send(JSON.stringify({
         type: 'input',
         payload: { data: interactiveInput + '\n' }
       }));
       setInteractiveOutput(prev => [...prev, `> ${interactiveInput}`]);
       setInteractiveInput('');
+      setWaitingForInput(false); // Clear the waiting state
+    } else {
+      console.warn('⚠️ Cannot send input - no WebSocket connection or empty input');
     }
   };
 
@@ -383,12 +559,49 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
             className="flex items-center gap-2"
             size="sm"
           >
-            {isRunning ? (
+            {isRunning && !isInteractive ? (
               <Loader className="w-4 h-4 animate-spin" />
             ) : (
               <Play className="w-4 h-4" />
             )}
             Run
+            {needsInput && (
+              <Badge variant="secondary" className="text-xs ml-1">
+                Input
+              </Badge>
+            )}
+          </Button>
+          
+          <Button
+            onClick={handleRunInTerminal}
+            disabled={isRunning || isCompiling || !activeTab}
+            variant={needsInput ? "default" : "outline"}
+            size="sm"
+            className="flex items-center gap-2"
+            title="Run in terminal (recommended for programs with input)"
+          >
+            <Terminal className="w-4 h-4" />
+            Terminal
+            {needsInput && (
+              <Badge variant="secondary" className="text-xs ml-1 bg-green-100 text-green-700">
+                Recommended
+              </Badge>
+            )}
+          </Button>
+          
+          <Button
+            onClick={handleRunInteractive}
+            disabled={isRunning || isCompiling || !activeTab}
+            variant="outline"
+            size="sm"
+            className="flex items-center gap-2"
+          >
+            {isRunning && isInteractive ? (
+              <Loader className="w-4 h-4 animate-spin" />
+            ) : (
+              <Terminal className="w-4 h-4" />
+            )}
+            Interactive
           </Button>
           
           {supportedLanguages.find(l => l.name === selectedLanguage)?.hasCompileStep && (
@@ -449,10 +662,19 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
           <div className="section-content">
             <Textarea
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Enter input for your program..."
+              onChange={(e) => {
+                setInput(e.target.value);
+                // Auto-expand input section when user starts typing
+                if (e.target.value && !expandedSections.input) {
+                  setExpandedSections(prev => ({ ...prev, input: true }));
+                }
+              }}
+              placeholder="Enter input for your program (for programs that need user input like input(), scanf(), etc.)..."
               className="min-h-20"
             />
+            <p className="text-xs text-gray-500 mt-2">
+              💡 Use "Interactive" mode for programs that need multiple inputs or real-time interaction.
+            </p>
           </div>
         )}
       </div>
@@ -644,6 +866,88 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
           )}
         </TabsContent>
       </Tabs>
+      
+      {/* Interactive Execution Panel */}
+      {isInteractive && (
+        <div className="interactive-panel mt-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="interactive-header p-3 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-blue-500" />
+                <span className="font-medium text-sm">Interactive Execution</span>
+                <Badge variant={waitingForInput ? "default" : "secondary"} className="text-xs">
+                  {waitingForInput ? 'Waiting for Input' : isRunning ? 'Running' : 'Ready'}
+                </Badge>
+                {waitingForInput && (
+                  <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 border-yellow-200">
+                    Input Required
+                  </Badge>
+                )}
+              </div>
+              <Button
+                onClick={handleStop}
+                variant="destructive"
+                size="sm"
+                className="h-7 px-3"
+              >
+                <Square className="w-3 h-3 mr-1" />
+                Stop
+              </Button>
+            </div>
+          </div>
+          
+          <div className="interactive-output bg-black text-green-400 p-4 font-mono text-sm max-h-60 overflow-y-auto">
+            {interactiveOutput.length > 0 ? (
+              interactiveOutput.map((line, index) => (
+                <div key={index}>{line}</div>
+              ))
+            ) : (
+              <div className="text-gray-500">Waiting for program output...</div>
+            )}
+          </div>
+          
+          <div className={`interactive-input p-3 border-t border-gray-200 dark:border-gray-700 ${waitingForInput ? 'bg-yellow-50 dark:bg-yellow-900/20' : ''}`}>
+            <div className="flex items-center gap-2">
+              {waitingForInput && (
+                <div className="flex items-center gap-1 text-yellow-600 dark:text-yellow-400 mr-2">
+                  <Terminal className="w-4 h-4" />
+                  <span className="text-sm font-medium">Input needed:</span>
+                </div>
+              )}
+              <input
+                type="text"
+                value={interactiveInput}
+                onChange={(e) => setInteractiveInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    sendInteractiveInput();
+                  }
+                }}
+                placeholder={waitingForInput ? "Program is waiting for input..." : "Enter input and press Enter..."}
+                className={`flex-1 px-3 py-2 text-sm border rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 ${
+                  waitingForInput 
+                    ? 'border-yellow-400 dark:border-yellow-500 ring-2 ring-yellow-200 dark:ring-yellow-800' 
+                    : 'border-gray-300 dark:border-gray-600'
+                }`}
+                disabled={!isRunning || !isInteractive}
+              />
+              <Button
+                onClick={sendInteractiveInput}
+                disabled={!isRunning || !isInteractive || !interactiveInput.trim()}
+                size="sm"
+                className={`px-4 ${waitingForInput ? 'bg-yellow-600 hover:bg-yellow-700' : ''}`}
+              >
+                Send
+              </Button>
+            </div>
+            {waitingForInput && (
+              <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">
+                💡 The program is waiting for your input. Type your response above and press Enter.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

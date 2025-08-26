@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: velocide-compiler
+  namespace: velocide
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: velocide-compiler
+  template:
+    metadata:
+      labels:
+        app: velocide-compiler
+    spec:
+      containers:
+        - name: compiler
+          image: ghcr.io/gkr5413/velocide-compiler:latest
+          ports:
+            - containerPort: 3002
+          env:
+            - name: PORT
+              value: "3002"
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: velocide-compiler
+  namespace: velocide
+spec:
+  selector:
+    app: velocide-compiler
+  ports:
+    - name: http
+      port: 3002
+      targetPort: 3002
+  type: ClusterIP
+
+
+
