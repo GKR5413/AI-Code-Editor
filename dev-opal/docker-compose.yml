@@ -24,6 +24,29 @@ services:
       - ide-network
     restart: unless-stopped
 
+  # Agent Service (Gemini/Groq tool-calling)
+  agent:
+    build:
+      context: ./agent-service
+      dockerfile: Dockerfile
+    image: ai-ide-agent:latest
+    ports:
+      - "6000:6000"
+    env_file:
+      - ./agent-service/.env
+    environment:
+      - NODE_ENV=production
+      - AGENT_SERVICE_PORT=6000
+      - WORKSPACE_PATH=/workspace
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    volumes:
+      - ./agent-service:/app
+      - shared_workspace:/workspace      # Shared workspace access
+    networks:
+      - ide-network
+    restart: unless-stopped
+
   # Docker Terminal Service
   docker-terminal:
     build:

@@ -62,10 +62,21 @@ async function writeFile(filePath, content) {
   }
 }
 
+async function deleteFile(filePath) {
+  try {
+    const safePath = getSafePath(filePath);
+    await fs.unlink(safePath);
+    return `Successfully deleted ${filePath}`;
+  } catch (error) {
+    return JSON.stringify({ error: error.message });
+  }
+}
+
 const tools = {
   listFiles,
   readFile,
   writeFile,
+  deleteFile,
 };
 
 const toolDefinitions = [
@@ -93,18 +104,29 @@ const toolDefinitions = [
           required: ["filePath"]
         } 
       },
-      { 
-        name: "writeFile", 
-        description: "Write content to a file within the /workspace directory. Overwrites existing files.", 
-        parameters: { 
-          type: "OBJECT", 
-          properties: { 
-            filePath: { type: "STRING", description: "The relative path to the file within the workspace." }, 
-            content: { type: "STRING", description: "The content to write." } 
-          },
-          required: ["filePath", "content"]
-        } 
-      }
+              { 
+          name: "writeFile", 
+          description: "Write content to a file within the /workspace directory. Overwrites existing files.", 
+          parameters: { 
+            type: "OBJECT", 
+            properties: { 
+              filePath: { type: "STRING", description: "The relative path to the file within the workspace." }, 
+              content: { type: "STRING", description: "The content to write." } 
+            },
+            required: ["filePath", "content"]
+          } 
+        },
+        { 
+          name: "deleteFile", 
+          description: "Delete a file within the /workspace directory.", 
+          parameters: { 
+            type: "OBJECT", 
+            properties: { 
+              filePath: { type: "STRING", description: "The relative path to the file within the workspace." } 
+            },
+            required: ["filePath"]
+          } 
+        }
     ]
   }
 ];
@@ -244,7 +266,8 @@ app.post('/api/agent', async (req, res) => {
       let response = await groq.chat.completions.create({ model, messages: convo, tools: [
         { type: 'function', function: { name: 'listFiles', description: 'List files', parameters: { type: 'object', properties: { directory: { type: 'string' } } } } },
         { type: 'function', function: { name: 'readFile', description: 'Read file', parameters: { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] } } },
-        { type: 'function', function: { name: 'writeFile', description: 'Write file', parameters: { type: 'object', properties: { filePath: { type: 'string' }, content: { type: 'string' } }, required: ['filePath','content'] } } }
+        { type: 'function', function: { name: 'writeFile', description: 'Write file', parameters: { type: 'object', properties: { filePath: { type: 'string' }, content: { type: 'string' } }, required: ['filePath','content'] } } },
+        { type: 'function', function: { name: 'deleteFile', description: 'Delete file', parameters: { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] } } }
       ], tool_choice: 'auto' });
 
       while (true) {
@@ -266,7 +289,8 @@ app.post('/api/agent', async (req, res) => {
         response = await groq.chat.completions.create({ model, messages: convo, tools: [
           { type: 'function', function: { name: 'listFiles', parameters: { type: 'object', properties: { directory: { type: 'string' } } } } },
           { type: 'function', function: { name: 'readFile', parameters: { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] } } },
-          { type: 'function', function: { name: 'writeFile', parameters: { type: 'object', properties: { filePath: { type: 'string' }, content: { type: 'string' } }, required: ['filePath','content'] } } }
+          { type: 'function', function: { name: 'writeFile', parameters: { type: 'object', properties: { filePath: { type: 'string' }, content: { type: 'string' } }, required: ['filePath','content'] } } },
+          { type: 'function', function: { name: 'deleteFile', parameters: { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] } } }
         ], tool_choice: 'auto' });
       }
 
