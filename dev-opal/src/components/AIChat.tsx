@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { 
   Send, 
   Bot, 
@@ -22,72 +22,37 @@ interface ChatMessage {
   model?: string;
 }
 
-const mockMessages: ChatMessage[] = [
-  {
-    id: '1',
-    type: 'ai',
-    content: `Hello! I'm your AI coding assistant. I can help you with:
-
-• Code explanation and documentation
-• Bug finding and fixing
-• Code optimization suggestions  
-• Converting natural language to code
-• Code reviews and best practices
-
-What would you like to work on today?`,
-    timestamp: new Date('2024-01-20T10:00:00'),
-    model: 'GPT-4'
-  },
-  {
-    id: '2',
-    type: 'user',
-    content: 'Can you help me optimize this React component for better performance?',
-    timestamp: new Date('2024-01-20T10:01:00')
-  },
-  {
-    id: '3',
-    type: 'ai',
-    content: `I'd be happy to help optimize your React component! To provide the best suggestions, could you:
-
-1. **Share the component code** - paste it in the editor or here
-2. **Describe performance issues** - slow rendering, memory leaks, etc.
-3. **Mention the component's purpose** - helps me suggest specific optimizations
-
-Common React optimizations I can help with:
-\`\`\`typescript
-// Memoization
-const OptimizedComponent = React.memo(MyComponent);
-
-// Callback optimization
-const handleClick = useCallback(() => {
-  // logic here
-}, [dependencies]);
-
-// State optimization
-const [items, setItems] = useState(() => expensiveInitialValue());
-\`\`\`
-
-What specific performance challenges are you facing?`,
-    timestamp: new Date('2024-01-20T10:02:00'),
-    model: 'GPT-4'
-  }
-];
-
 const models = [
-  { value: 'gpt-4', label: 'GPT-4', description: 'Most capable, best for complex reasoning' },
-  { value: 'claude', label: 'Claude', description: 'Great for coding and documentation' },
-  { value: 'codellama', label: 'CodeLlama', description: 'Specialized for code generation' },
-  { value: 'local', label: 'Local Model', description: 'Run locally via Ollama' }
+  // Keep exact IDs for backend; custom labels for UI
+  { value: 'gemini-1.5-flash', label: 'gemini 2.5', description: 'Fast Gemini model' },
+  { value: 'gemini-1.5-pro', label: 'gemini-1.5-pro', description: 'Advanced Gemini 1.5 model' },
+  { value: 'llama3-8b-8192', label: 'llama3-8b-8192', description: 'Groq LLaMA 3 (8B, 8k)' },
 ];
 
 export const AIChat: React.FC = () => {
-  const [messages, setMessages] = useState(mockMessages);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gpt-4');
+  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
   const [isLoading, setIsLoading] = useState(false);
-  const [tokenUsage, setTokenUsage] = useState({ used: 1247, limit: 10000 });
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  const sendMessage = async () => {
+  const scrollToBottom = useCallback((smooth: boolean = true) => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
+    }
+  }, []);
+
+  // Scroll on new messages or loading state changes
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isLoading, scrollToBottom]);
+
+  // Initial scroll on mount
+  useEffect(() => {
+    scrollToBottom(false);
+  }, [scrollToBottom]);
+
+  const sendMessage = useCallback(async () => {
     if (!inputValue.trim() || isLoading) return;
 
     const newMessage: ChatMessage = {
@@ -101,20 +66,46 @@ export const AIChat: React.FC = () => {
     setInputValue('');
     setIsLoading(true);
 
-    // Simulate AI response
-    setTimeout(() => {
+    try {
+      // Route via Vite proxy to avoid CORS (configured as /agent -> http://localhost:6000)
+      const response = await fetch('/agent/api/agent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ prompt: inputValue, model: selectedModel }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
       const aiResponse: ChatMessage = {
         id: (Date.now() + 1).toString(),
         type: 'ai',
-        content: 'I understand you want to work on that. Let me analyze your code and provide some suggestions...',
+        content: data.response, // Use response from the service
         timestamp: new Date(),
-        model: selectedModel.toUpperCase()
+        model: selectedModel.toUpperCase(),
       };
-      setMessages(prev => [...prev, aiResponse]);
+
+      setMessages((prev) => [...prev, aiResponse]);
+
+    } catch (error) {
+      console.error("Failed to send message to agent:", error);
+      const errorResponse: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: 'Sorry, I encountered an error trying to connect to the agent service.',
+        timestamp: new Date(),
+        model: 'Error'
+      };
+      setMessages((prev) => [...prev, errorResponse]);
+    } finally {
       setIsLoading(false);
-      setTokenUsage(prev => ({ ...prev, used: prev.used + 150 }));
-    }, 1500);
-  };
+    }
+  }, [inputValue, isLoading, selectedModel]);
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -130,11 +121,10 @@ export const AIChat: React.FC = () => {
 
   const clearConversation = () => {
     setMessages([]);
-    setTokenUsage(prev => ({ ...prev, used: 0 }));
   };
 
   return (
-    <div className="ai-chat-panel">
+    <div className="ai-chat-panel flex flex-col h-full">
       {/* Header */}
       <div className="chat-header">
         <div className="chat-title">
@@ -164,12 +154,12 @@ export const AIChat: React.FC = () => {
       </div>
 
       {/* Messages */}
-      <div className="messages-container">
+      <div className="messages-container flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <div className="text-center text-md-on-surface-variant py-8">
             <Bot size={32} className="mx-auto mb-3 opacity-50" />
-            <p className="md-body-small mb-1">No conversation yet</p>
-            <p className="text-xs">Start by asking a question!</p>
+            <p className="font-bold mb-1">AI Assistant</p>
+            <p className="text-xs">Ask me anything to get started!</p>
           </div>
         ) : (
           messages.map((message) => (
@@ -205,6 +195,9 @@ export const AIChat: React.FC = () => {
             </div>
           ))
         )}
+
+        {/* Anchor to keep scroll at bottom */}
+        <div ref={messagesEndRef} />
 
         {isLoading && (
           <div className="message ai-message">

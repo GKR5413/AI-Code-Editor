@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
+import AIChat from '@/components/AIChat';
 import TopBar from '@/components/TopBar';
 import FileExplorer from '@/components/FileExplorer';
-import CompilerPanel from '@/components/CompilerPanel';
 import CodeEditor from '@/components/CodeEditor';
 import ResizablePanel from '@/components/ResizablePanel';
 import { TerminalTabs } from '@/components/TerminalTabs';
@@ -11,7 +11,6 @@ export default function Index() {
 
   const handleCompilerTerminalReady = (terminalRef: any) => {
     compilerTerminalRef.current = terminalRef;
-    // Make it globally available for CompilerPanel
     (window as any).compilerTerminalRef = terminalRef;
     (window as any).switchToCompilerTerminal = () => {
       // This will be implemented by TerminalTabs component
@@ -21,7 +20,8 @@ export default function Index() {
   return (
     <div className="h-screen flex flex-col bg-md-surface">
       <TopBar />
-      <div className="flex-1 flex overflow-hidden">
+      {/* Ensure content starts below sticky header height (h-12) */}
+      <div className="flex-1 flex overflow-hidden pt-12">
         <ResizablePanel
           direction="vertical"
           minSize={200}
@@ -55,12 +55,12 @@ export default function Index() {
         <ResizablePanel
           direction="vertical"
           minSize={300}
-          maxSize={500}
-          defaultSize={350}
-          persistKey="compilerPanelWidth"
+          maxSize={600}
+          defaultSize={400}
+          persistKey="aiChatPanelWidth"
           className="border-l border-ide-panel-border"
         >
-          <CompilerPanel />
+          <AIChat />
         </ResizablePanel>
       </div>
     </div>
