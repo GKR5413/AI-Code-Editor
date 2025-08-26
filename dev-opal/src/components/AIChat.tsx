@@ -1,14 +1,12 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { 
-  Send, 
-  Bot, 
-  User, 
-  Copy, 
-  RefreshCw, 
-  Settings, 
-  ChevronDown,
+import {
+  Send,
+  Bot,
+  User,
+  Copy,
+  RefreshCw,
+  Settings,
   Sparkles,
-  MessageSquare,
   Trash2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,35 +20,24 @@ interface ChatMessage {
   model?: string;
 }
 
+// Updated model definitions
 const models = [
-  // Keep exact IDs for backend; custom labels for UI
-  { value: 'gemini-1.5-flash', label: 'gemini 2.5', description: 'Fast Gemini model' },
-  { value: 'gemini-1.5-pro', label: 'gemini-1.5-pro', description: 'Advanced Gemini 1.5 model' },
-  { value: 'llama3-8b-8192', label: 'llama3-8b-8192', description: 'Groq LLaMA 3 (8B, 8k)' },
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { value: 'llama3-8b-8192', label: 'Llama 3' },
 ];
 
 export const AIChat: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
+  const [selectedModel, setSelectedModel] = useState(models[0].value);
   const [isLoading, setIsLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = useCallback((smooth: boolean = true) => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
-    }
-  }, []);
-
-  // Scroll on new messages or loading state changes
+  // Auto-scrolling effect
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, isLoading, scrollToBottom]);
-
-  // Initial scroll on mount
-  useEffect(() => {
-    scrollToBottom(false);
-  }, [scrollToBottom]);
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   const sendMessage = useCallback(async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -67,13 +54,18 @@ export const AIChat: React.FC = () => {
     setIsLoading(true);
 
     try {
-      // Route via Vite proxy to avoid CORS (configured as /agent -> http://localhost:6000)
+      // Updated fetch endpoint to use the proxy
       const response = await fetch('/agent/api/agent', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ prompt: inputValue, model: selectedModel }),
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: [
+            { role: 'user', content: inputValue }
+          ]
+        }),
       });
 
       if (!response.ok) {
@@ -81,13 +73,14 @@ export const AIChat: React.FC = () => {
       }
 
       const data = await response.json();
+      const currentModel = models.find(m => m.value === selectedModel);
 
       const aiResponse: ChatMessage = {
         id: (Date.now() + 1).toString(),
         type: 'ai',
-        content: data.response, // Use response from the service
+        content: data.response,
         timestamp: new Date(),
-        model: selectedModel.toUpperCase(),
+        model: currentModel?.label,
       };
 
       setMessages((prev) => [...prev, aiResponse]);
@@ -116,7 +109,6 @@ export const AIChat: React.FC = () => {
 
   const copyMessage = (content: string) => {
     navigator.clipboard.writeText(content);
-    // Could show toast notification here
   };
 
   const clearConversation = () => {
@@ -125,7 +117,6 @@ export const AIChat: React.FC = () => {
 
   return (
     <div className="ai-chat-panel flex flex-col h-full">
-      {/* Header */}
       <div className="chat-header">
         <div className="chat-title">
           <Sparkles className="w-5 h-5" />
@@ -144,103 +135,56 @@ export const AIChat: React.FC = () => {
               ))}
             </SelectContent>
           </Select>
-          <Button variant="ghost" size="sm" className="chat-settings w-8 h-8 p-0" title="Settings">
-            <Settings className="w-4 h-4" />
-          </Button>
           <Button variant="ghost" size="sm" className="w-8 h-8 p-0" onClick={clearConversation} title="Clear">
             <Trash2 className="w-4 h-4" />
           </Button>
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="messages-container flex-1 overflow-y-auto">
-        {messages.length === 0 ? (
-          <div className="text-center text-md-on-surface-variant py-8">
-            <Bot size={32} className="mx-auto mb-3 opacity-50" />
-            <p className="font-bold mb-1">AI Assistant</p>
-            <p className="text-xs">Ask me anything to get started!</p>
-          </div>
-        ) : (
-          messages.map((message) => (
-            <div key={message.id} className={`message ${message.type === 'user' ? 'user-message' : 'ai-message'}`}>
-              <div className="message-avatar">
-                {message.type === 'user' ? (
-                  <User className="w-4 h-4" />
-                ) : (
-                  <Bot className="w-4 h-4" />
+      <div className="messages-container flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.map((message) => (
+          <div key={message.id} className={`message flex items-start gap-3 ${message.type === 'user' ? 'justify-end' : ''}`}>
+            {message.type === 'ai' && <Bot className="w-5 h-5 mt-1 flex-shrink-0" />}
+            <div className={`message-content rounded-lg px-3 py-2 max-w-lg ${message.type === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600'}`}>
+              <p className="text-sm whitespace-pre-wrap break-words font-medium">{message.content}</p>
+              <div className="message-actions text-xs mt-1 opacity-80 flex items-center gap-2">
+                <span>{message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                {message.model && <span className='font-semibold'>{message.model}</span>}
+                {message.type === 'ai' && (
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyMessage(message.content)} title="Copy">
+                    <Copy className="w-3 h-3" />
+                  </Button>
                 )}
               </div>
-              <div className="message-content">
-                <div className="message-bubble">
-                  <div className="md-body-small whitespace-pre-wrap break-words">{message.content}</div>
-                </div>
-                <div className="message-actions">
-                  {message.type === 'ai' && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="copy-code w-6 h-6 p-0"
-                      onClick={() => copyMessage(message.content)}
-                      title="Copy"
-                    >
-                      <Copy className="w-3 h-3" />
-                    </Button>
-                  )}
-                  <div className="message-time">
-                    {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                </div>
-              </div>
             </div>
-          ))
-        )}
-
-        {/* Anchor to keep scroll at bottom */}
-        <div ref={messagesEndRef} />
-
-        {isLoading && (
-          <div className="message ai-message">
-            <div className="message-avatar">
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            </div>
-            <div className="message-content">
-              <div className="message-bubble">
-                <div className="typing-indicator">
-                  <div className="typing-dot" />
-                  <div className="typing-dot" style={{ animationDelay: '0.2s' }} />
-                  <div className="typing-dot" style={{ animationDelay: '0.4s' }} />
-                </div>
-              </div>
-            </div>
+            {message.type === 'user' && <User className="w-5 h-5 mt-1 flex-shrink-0" />}
           </div>
-        )}
+        ))}
+        <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      <div className="chat-input-container">
-        <div className="input-wrapper">
+      <div className="chat-input-container p-2 border-t">
+        <div className="input-wrapper relative">
           <textarea
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyPress}
-            placeholder="Ask me anything about your code..."
-            className="chat-input"
+            placeholder="Ask anything..."
+            className="chat-input w-full p-2 pr-12 rounded-md resize-none border"
             rows={1}
           />
           <Button
             onClick={sendMessage}
             disabled={!inputValue.trim() || isLoading}
-            className="send-button w-8 h-8 p-0 rounded-md md-filled"
+            className="send-button absolute right-2 top-1/2 -translate-y-1/2"
+            size="icon"
             title="Send"
           >
             <Send className="w-4 h-4" />
           </Button>
         </div>
-        <div className="input-help text-xs text-md-on-surface-variant mt-2">Shift + Enter for new line</div>
       </div>
     </div>
   );
 };
-
 export default AIChat;
