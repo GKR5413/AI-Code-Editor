@@ -30,6 +30,7 @@ services:
       context: .
       dockerfile: Dockerfile.terminal
     image: ai-ide-terminal:latest
+    user: "501:20"  # Host user permissions for write access
     ports:
       - "3003:3001"  # Terminal server (mapped to avoid Docker Desktop conflicts)
     volumes:
@@ -63,6 +64,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.compiler
+    user: "501:20"  # Host user permissions for write access
     ports:
       - "3002:3002"  # Compiler service
       - "4002:4002"  # WebSocket for interactive execution

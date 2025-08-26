@@ -1,4 +1,4 @@
-require('dotenv').config();
+// require('dotenv').config(); // Removed dependency
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs/promises');
@@ -10,7 +10,7 @@ app.use(express.json());
 
 // --- Security Configuration ---
 // Confine all file operations to the /workspace directory
-const WORKSPACE_DIR = path.resolve(__dirname, '../workspace');
+const WORKSPACE_DIR = process.env.WORKSPACE_PATH || '/workspace';
 console.log(`File service sandboxed to: ${WORKSPACE_DIR}`);
 
 /**
@@ -32,54 +32,80 @@ function getSafePath(userPath) {
 
 // --- API Endpoint ---
 app.post('/workspace/files', async (req, res) => {
-  const { command, path: userPath, content } = req.body;
+  const { action, path: userPath, content } = req.body;
 
-  if (!command || !userPath) {
-    return res.status(400).json({ error: 'The 'command' and 'path' fields are required.' });
+  if (!action || !userPath) {
+    return res.status(400).json({ error: 'The action and path fields are required.' });
   }
 
   try {
     const safePath = getSafePath(userPath);
 
-    switch (command) {
+    switch (action) {
       case 'list': {
         const files = await fs.readdir(safePath, { withFileTypes: true });
-        const fileList = files.map(file => ({
-          name: file.name,
-          isDirectory: file.isDirectory(),
-        }));
-        return res.json(fileList);
+        const fileList = files.map(file => {
+          const filePath = path.join(userPath, file.name).replace(/\\/g, '/');
+          return {
+            name: file.name,
+            type: file.isDirectory() ? 'directory' : 'file',
+            size: 0, // Size will be calculated if needed
+            path: filePath,
+            modified: new Date().toISOString()
+          };
+        });
+        return res.json({ success: true, files: fileList });
       }
 
       case 'read': {
         const fileContent = await fs.readFile(safePath, 'utf-8');
-        return res.send(fileContent);
+        return res.json({ success: true, content: fileContent });
       }
 
       case 'write': {
         if (typeof content !== 'string') {
-          return res.status(400).json({ error: 'The 'content' field is required for the write command.' });
+          return res.status(400).json({ success: false, error: 'The content field is required for the write action.' });
         }
         await fs.mkdir(path.dirname(safePath), { recursive: true });
         await fs.writeFile(safePath, content);
-        return res.status(200).json({ message: `File '${userPath}' saved successfully.` });
+        return res.json({ success: true, message: `File '${userPath}' saved successfully.` });
+      }
+
+      case 'mkdir': {
+        await fs.mkdir(safePath, { recursive: true });
+        return res.json({ success: true, message: `Directory '${userPath}' created successfully.` });
+      }
+
+      case 'delete': {
+        const stats = await fs.stat(safePath);
+        if (stats.isDirectory()) {
+          await fs.rmdir(safePath, { recursive: true });
+        } else {
+          await fs.unlink(safePath);
+        }
+        return res.json({ success: true, message: `Item '${userPath}' deleted successfully.` });
       }
 
       default: {
-        return res.status(400).json({ error: `Unknown command: '${command}'` });
+        return res.status(400).json({ success: false, error: `Unknown action: '${action}'` });
       }
     }
   } catch (error) {
-    console.error(`Operation '${command}' on path '${userPath}' failed:`, error);
+    console.error(`Operation '${action}' on path '${userPath}' failed:`, error);
     // Avoid leaking internal path details in the error message
     if (error.code === 'ENOENT') {
-        return res.status(404).json({ error: `Path not found: '${userPath}'` });
+        return res.status(404).json({ success: false, error: `Path not found: '${userPath}'` });
     }
-    return res.status(500).json({ error: `An internal error occurred: ${error.message}` });
+    return res.status(500).json({ success: false, error: `An internal error occurred: ${error.message}` });
   }
 });
 
-const PORT = process.env.COMPILER_SERVICE_PORT || 7000;
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Compiler service is running' });
+});
+
+const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => {
   console.log(`Compiler service (File Operations) listening on http://localhost:${PORT}`);
 });

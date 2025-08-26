@@ -11,7 +11,7 @@ app.use(cors());
 app.use(express.json());
 
 // --- Secure Workspace Configuration ---
-const WORKSPACE_DIR = path.resolve(process.env.WORKSPACE_PATH || '/workspace');
+const WORKSPACE_DIR = path.resolve(process.env.WORKSPACE_PATH || path.join(__dirname, 'workspace'));
 console.log(`Security sandbox configured for directory: ${WORKSPACE_DIR}`);
 
 // --- Secure Tool Definitions ---
@@ -68,13 +68,46 @@ const tools = {
   writeFile,
 };
 
-const toolDefinitions = {
-  functionDeclarations: [
-    { name: "listFiles", description: "List files and directories at a given path within the /workspace directory.", parameters: { type: "OBJECT", properties: { directory: { type: "STRING", description: "The relative path within the workspace." } } } },
-    { name: "readFile", description: "Read the contents of a file within the /workspace directory.", parameters: { type: "OBJECT", properties: { filePath: { type: "STRING", description: "The relative path to the file within the workspace." } } } },
-    { name: "writeFile", description: "Write content to a file within the /workspace directory. Overwrites existing files.", parameters: { type: "OBJECT", properties: { filePath: { type: "STRING", description: "The relative path to the file within the workspace." }, content: { type: "STRING", description: "The content to write." } } } }
-  ]
-};
+const toolDefinitions = [
+  {
+    functionDeclarations: [
+      { 
+        name: "listFiles", 
+        description: "List files and directories at a given path within the /workspace directory.", 
+        parameters: { 
+          type: "OBJECT", 
+          properties: { 
+            directory: { type: "STRING", description: "The relative path within the workspace." } 
+          },
+          required: ["directory"]
+        } 
+      },
+      { 
+        name: "readFile", 
+        description: "Read the contents of a file within the /workspace directory.", 
+        parameters: { 
+          type: "OBJECT", 
+          properties: { 
+            filePath: { type: "STRING", description: "The relative path to the file within the workspace." } 
+          },
+          required: ["filePath"]
+        } 
+      },
+      { 
+        name: "writeFile", 
+        description: "Write content to a file within the /workspace directory. Overwrites existing files.", 
+        parameters: { 
+          type: "OBJECT", 
+          properties: { 
+            filePath: { type: "STRING", description: "The relative path to the file within the workspace." }, 
+            content: { type: "STRING", description: "The content to write." } 
+          },
+          required: ["filePath", "content"]
+        } 
+      }
+    ]
+  }
+];
 
 // --- AI Client Initialization from Environment Variables ---
 let genAI, groq;
@@ -108,35 +141,97 @@ app.post('/api/agent', async (req, res) => {
     if (model === 'gemini-2.5-pro' || model === 'gemini-2.5-flash' || model === 'gemini-1.5-flash' || model === 'gemini-1.5-pro') {
       if (!genAI) return res.status(500).json({ error: 'Gemini not configured on server.' });
 
-      const gModel = genAI.getGenerativeModel({ model });
-      // Build history and current turn
-      const history = messages.slice(0, -1).map(m => ({
+      console.log('Creating Gemini model with tools:', JSON.stringify(toolDefinitions, null, 2));
+      const gModel = genAI.getGenerativeModel({ 
+        model,
+        tools: toolDefinitions,
+        toolConfig: {
+          functionCallingConfig: {
+            mode: "ANY"
+          }
+        }
+      });
+      
+      // Build message history for the new API
+      const contents = messages.map(m => ({
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: String(m.content ?? '') }]
       }));
-      const last = messages[messages.length - 1];
-      const chat = gModel.startChat({ tools: [toolDefinitions], history });
-
-      let result = await chat.sendMessage([{ text: String(last.content ?? '') }]);
+      
+      console.log('Sending request to Gemini with', contents.length, 'messages');
+      let result = await gModel.generateContent({
+        contents: contents,
+        tools: toolDefinitions,
+        toolConfig: {
+          functionCallingConfig: {
+            mode: "ANY"
+          }
+        }
+      });
+      console.log('Gemini response:', JSON.stringify(result.response, null, 2));
 
       // Loop while model issues tool calls
       while (true) {
         const cand = result?.response?.candidates?.[0];
-        const part = cand?.content?.parts?.[0];
-        const call = part?.functionCall;
-        if (!call) break;
-
-        const toolName = call.name;
-        const args = call.args || {};
-        const toolFn = tools[toolName];
-        if (!toolFn) {
-          // respond with error to the model
-          result = await chat.sendMessage([{ functionResponse: { name: toolName, response: { error: `Tool not found: ${toolName}` } } }]);
+        console.log('Checking candidate:', JSON.stringify(cand, null, 2));
+        const parts = cand?.content?.parts || [];
+        console.log('Parts:', JSON.stringify(parts, null, 2));
+        
+        // Check for function calls in any part
+        let call = null;
+        for (const part of parts) {
+          if (part?.functionCall) {
+            call = part.functionCall;
+            break;
+          }
+        }
+        
+        if (!call) {
+          console.log('No function call found, breaking');
           break;
         }
 
-        const toolResult = await toolFn(...Object.values(args));
-        result = await chat.sendMessage([{ functionResponse: { name: toolName, response: { result: toolResult } } }]);
+        console.log('Function call detected:', call);
+        const toolName = call.name;
+        const args = call.args || {};
+        const toolFn = tools[toolName];
+        
+        if (!toolFn) {
+          console.log(`Tool not found: ${toolName}`);
+          // Continue with response generation
+          break;
+        }
+
+        console.log(`Executing tool: ${toolName} with args:`, args);
+        const toolResult = await toolFn(args.directory || args.filePath, args.content);
+        console.log(`Tool result:`, toolResult);
+        
+        // Send function response back to model
+        contents.push({
+          role: 'model',
+          parts: [{ functionCall: call }]
+        });
+        contents.push({
+          role: 'function',
+          parts: [{ 
+            functionResponse: { 
+              name: toolName, 
+              response: { result: toolResult } 
+            } 
+          }]
+        });
+        
+        // Generate follow-up response
+        result = await gModel.generateContent({
+          contents: contents,
+          tools: toolDefinitions,
+          toolConfig: {
+            functionCallingConfig: {
+              mode: "AUTO"
+            }
+          }
+        });
+        console.log('Follow-up Gemini response:', JSON.stringify(result.response, null, 2));
       }
 
       const outText = result?.response?.candidates?.[0]?.content?.parts?.map(p => p.text).filter(Boolean).join('\n') || '';

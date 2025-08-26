@@ -63,6 +63,10 @@ export const AIChat: React.FC = () => {
         body: JSON.stringify({
           model: selectedModel,
           messages: [
+            ...messages.map(msg => ({
+              role: msg.type === 'user' ? 'user' : 'assistant',
+              content: msg.content
+            })),
             { role: 'user', content: inputValue }
           ]
         }),
