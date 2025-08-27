@@ -1,310 +1,144 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs/promises');
-const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const Groq = require('groq-sdk');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
-
-// --- Secure Workspace Configuration ---
-const WORKSPACE_DIR = path.resolve(process.env.WORKSPACE_PATH || path.join(__dirname, 'workspace'));
-console.log(`Security sandbox configured for directory: ${WORKSPACE_DIR}`);
-
-// --- Secure Tool Definitions ---
-
-/**
- * Safely resolves a user-provided path against the workspace directory.
- * Throws an error if the path attempts to escape the sandbox.
- * @param {string} relativePath - The path provided by the user or AI.
- * @returns {string} The absolute, verified path.
- */
-function getSafePath(relativePath) {
-  const targetPath = path.join(WORKSPACE_DIR, relativePath || '');
-  if (!targetPath.startsWith(WORKSPACE_DIR)) {
-    throw new Error('Access denied: Path is outside the configured workspace.');
-  }
-  return targetPath;
-}
-
-async function listFiles(directory) {
-  try {
-    const safePath = getSafePath(directory);
-    const files = await fs.readdir(safePath);
-    return JSON.stringify(files);
-  } catch (error) {
-    return JSON.stringify({ error: error.message });
-  }
-}
-
-async function readFile(filePath) {
-  try {
-    const safePath = getSafePath(filePath);
-    const content = await fs.readFile(safePath, 'utf-8');
-    return content;
-  } catch (error) {
-    return JSON.stringify({ error: error.message });
-  }
-}
-
-async function writeFile(filePath, content) {
-  try {
-    const safePath = getSafePath(filePath);
-    // Ensure the directory exists before writing
-    await fs.mkdir(path.dirname(safePath), { recursive: true });
-    await fs.writeFile(safePath, content);
-    return `Successfully wrote to ${filePath}`;
-  } catch (error) {
-    return JSON.stringify({ error: error.message });
-  }
-}
-
-async function deleteFile(filePath) {
-  try {
-    const safePath = getSafePath(filePath);
-    await fs.unlink(safePath);
-    return `Successfully deleted ${filePath}`;
-  } catch (error) {
-    return JSON.stringify({ error: error.message });
-  }
-}
-
-const tools = {
-  listFiles,
-  readFile,
-  writeFile,
-  deleteFile,
-};
-
-const toolDefinitions = [
-  {
-    functionDeclarations: [
-      { 
-        name: "listFiles", 
-        description: "List files and directories at a given path within the /workspace directory.", 
-        parameters: { 
-          type: "OBJECT", 
-          properties: { 
-            directory: { type: "STRING", description: "The relative path within the workspace." } 
-          },
-          required: ["directory"]
-        } 
-      },
-      { 
-        name: "readFile", 
-        description: "Read the contents of a file within the /workspace directory.", 
-        parameters: { 
-          type: "OBJECT", 
-          properties: { 
-            filePath: { type: "STRING", description: "The relative path to the file within the workspace." } 
-          },
-          required: ["filePath"]
-        } 
-      },
-              { 
-          name: "writeFile", 
-          description: "Write content to a file within the /workspace directory. Overwrites existing files.", 
-          parameters: { 
-            type: "OBJECT", 
-            properties: { 
-              filePath: { type: "STRING", description: "The relative path to the file within the workspace." }, 
-              content: { type: "STRING", description: "The content to write." } 
-            },
-            required: ["filePath", "content"]
-          } 
-        },
-        { 
-          name: "deleteFile", 
-          description: "Delete a file within the /workspace directory.", 
-          parameters: { 
-            type: "OBJECT", 
-            properties: { 
-              filePath: { type: "STRING", description: "The relative path to the file within the workspace." } 
-            },
-            required: ["filePath"]
-          } 
-        }
-    ]
-  }
-];
-
-// --- AI Client Initialization from Environment Variables ---
-let genAI, groq;
-if (process.env.GEMINI_API_KEY) {
-  genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  console.log('Gemini client initialized.');
-} else {
-  console.warn('GEMINI_API_KEY not found. Tool-based agent features will be disabled.');
-}
-
-if (process.env.GROQ_API_KEY) {
-  groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-  console.log('Groq client initialized.');
-} else {
-  console.warn('GROQ_API_KEY not found. Groq chat features will be disabled.');
-}
 
 const PORT = process.env.AGENT_SERVICE_PORT || 6000;
 
-// --- API Endpoints ---
-app.get('/', (req, res) => res.send('Agent Service is running!'));
+// Initialize Gemini AI
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    message: 'Agent Service with Gemini 2.5 is running!',
+    services: {
+      gemini: !!process.env.GEMINI_API_KEY
+    }
+  });
+});
+
+// Main agent endpoint for Gemini 2.5
 app.post('/api/agent', async (req, res) => {
-  const { model, messages } = req.body || {};
-  if (!model || !Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).json({ error: 'model and messages[] are required' });
-  }
-
   try {
-    // GEMINI tool-calling flow
-    if (model === 'gemini-2.5-pro' || model === 'gemini-2.5-flash' || model === 'gemini-1.5-flash' || model === 'gemini-1.5-pro') {
-      if (!genAI) return res.status(500).json({ error: 'Gemini not configured on server.' });
+    const { model = 'gemini-2.0-flash-exp', messages } = req.body;
+    
+    console.log('🤖 Gemini Agent Request:', {
+      model,
+      messageCount: messages?.length || 0
+    });
 
-      console.log('Creating Gemini model with tools:', JSON.stringify(toolDefinitions, null, 2));
-      const gModel = genAI.getGenerativeModel({ 
-        model,
-        tools: toolDefinitions,
-        toolConfig: {
-          functionCallingConfig: {
-            mode: "ANY"
-          }
-        }
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ 
+        error: 'messages array is required' 
       });
-      
-      // Build message history for the new API
-      const contents = messages.map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: String(m.content ?? '') }]
-      }));
-      
-      console.log('Sending request to Gemini with', contents.length, 'messages');
-      let result = await gModel.generateContent({
-        contents: contents,
-        tools: toolDefinitions,
-        toolConfig: {
-          functionCallingConfig: {
-            mode: "ANY"
-          }
-        }
-      });
-      console.log('Gemini response:', JSON.stringify(result.response, null, 2));
-
-      // Loop while model issues tool calls
-      while (true) {
-        const cand = result?.response?.candidates?.[0];
-        console.log('Checking candidate:', JSON.stringify(cand, null, 2));
-        const parts = cand?.content?.parts || [];
-        console.log('Parts:', JSON.stringify(parts, null, 2));
-        
-        // Check for function calls in any part
-        let call = null;
-        for (const part of parts) {
-          if (part?.functionCall) {
-            call = part.functionCall;
-            break;
-          }
-        }
-        
-        if (!call) {
-          console.log('No function call found, breaking');
-          break;
-        }
-
-        console.log('Function call detected:', call);
-        const toolName = call.name;
-        const args = call.args || {};
-        const toolFn = tools[toolName];
-        
-        if (!toolFn) {
-          console.log(`Tool not found: ${toolName}`);
-          // Continue with response generation
-          break;
-        }
-
-        console.log(`Executing tool: ${toolName} with args:`, args);
-        const toolResult = await toolFn(args.directory || args.filePath, args.content);
-        console.log(`Tool result:`, toolResult);
-        
-        // Send function response back to model
-        contents.push({
-          role: 'model',
-          parts: [{ functionCall: call }]
-        });
-        contents.push({
-          role: 'function',
-          parts: [{ 
-            functionResponse: { 
-              name: toolName, 
-              response: { result: toolResult } 
-            } 
-          }]
-        });
-        
-        // Generate follow-up response
-        result = await gModel.generateContent({
-          contents: contents,
-          tools: toolDefinitions,
-          toolConfig: {
-            functionCallingConfig: {
-              mode: "AUTO"
-            }
-          }
-        });
-        console.log('Follow-up Gemini response:', JSON.stringify(result.response, null, 2));
-      }
-
-      const outText = result?.response?.candidates?.[0]?.content?.parts?.map(p => p.text).filter(Boolean).join('\n') || '';
-      return res.json({ response: outText });
     }
 
-    // GROQ (OpenAI-compatible) tool-calling flow
-    if (groq) {
-      let convo = messages.map(m => ({ role: m.role, content: String(m.content ?? '') }));
-      let response = await groq.chat.completions.create({ model, messages: convo, tools: [
-        { type: 'function', function: { name: 'listFiles', description: 'List files', parameters: { type: 'object', properties: { directory: { type: 'string' } } } } },
-        { type: 'function', function: { name: 'readFile', description: 'Read file', parameters: { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] } } },
-        { type: 'function', function: { name: 'writeFile', description: 'Write file', parameters: { type: 'object', properties: { filePath: { type: 'string' }, content: { type: 'string' } }, required: ['filePath','content'] } } },
-        { type: 'function', function: { name: 'deleteFile', description: 'Delete file', parameters: { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] } } }
-      ], tool_choice: 'auto' });
+    // Initialize Gemini model
+    const geminiModel = genAI.getGenerativeModel({ model });
+    
+    // Create conversation history
+    const conversation = geminiModel.startChat({
+      history: messages.slice(0, -1).map(msg => ({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: msg.content
+      })),
+      generationConfig: {
+        maxOutputTokens: 2048,
+        temperature: 0.7,
+      },
+    });
 
-      while (true) {
-        const msg = response.choices?.[0]?.message;
-        const calls = msg?.tool_calls || [];
-        if (!calls.length) break;
+    // Get the last user message
+    const lastMessage = messages[messages.length - 1];
+    
+    // Send message to Gemini
+    const result = await conversation.sendMessage(lastMessage.content);
+    const response = await result.response;
+    const geminiResponse = response.text();
 
-        if (msg.content) convo.push({ role: 'assistant', content: msg.content });
+    // Prepare the response
+    const agentResponse = {
+      response: geminiResponse,
+      model: model,
+      timestamp: new Date().toISOString()
+    };
 
-        for (const c of calls) {
-          const toolName = c.function?.name;
-          let args = {};
-          try { args = JSON.parse(c.function?.arguments || '{}'); } catch {}
-          const toolFn = tools[toolName];
-          const toolResult = toolFn ? await toolFn(args.directory ?? args.filePath, args.content) : { error: `Tool not found: ${toolName}` };
-          convo.push({ role: 'tool', tool_call_id: c.id, content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult) });
-        }
+    res.status(200).json(agentResponse);
 
-        response = await groq.chat.completions.create({ model, messages: convo, tools: [
-          { type: 'function', function: { name: 'listFiles', parameters: { type: 'object', properties: { directory: { type: 'string' } } } } },
-          { type: 'function', function: { name: 'readFile', parameters: { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] } } },
-          { type: 'function', function: { name: 'writeFile', parameters: { type: 'object', properties: { filePath: { type: 'string' }, content: { type: 'string' } }, required: ['filePath','content'] } } },
-          { type: 'function', function: { name: 'deleteFile', parameters: { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] } } }
-        ], tool_choice: 'auto' });
-      }
-
-      const finalText = response.choices?.[0]?.message?.content || '';
-      return res.json({ response: finalText });
-    }
-
-    return res.status(500).json({ error: 'No AI models are configured on the server.' });
   } catch (error) {
-    console.error('Error in agent logic:', error);
-    res.status(500).json({ error: 'Failed to get response from AI' });
+    console.error('❌ Error in Gemini agent:', error);
+    res.status(500).json({ 
+      error: 'Failed to process request',
+      details: error.message 
+    });
   }
 });
 
+
+// Gemini-specific endpoint for code generation
+app.post('/api/gemini/code-generate', async (req, res) => {
+  try {
+    const { prompt, language } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({ 
+        error: 'prompt is required' 
+      });
+    }
+
+    // Initialize Gemini model for code generation
+    const geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    
+    // Create a system prompt for code generation
+    const systemPrompt = `You are an expert ${language || 'programming'} developer. 
+    Generate clean, efficient, and well-commented code based on the user's request.
+    Only return the code, no explanations unless specifically requested.`;
+    
+    const fullPrompt = `${systemPrompt}\n\nUser request: ${prompt}`;
+    
+    const result = await geminiModel.generateContent(fullPrompt);
+    const response = await result.response;
+    const generatedCode = response.text();
+
+    res.json({
+      code: generatedCode,
+      language: language || 'unknown',
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Error in code generation:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate code',
+      details: error.message 
+    });
+  }
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('\n🛑 Shutting down Agent Service...');
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n🛑 Received SIGTERM, shutting down Agent Service...');
+  process.exit(0);
+});
+
 app.listen(PORT, () => {
-  console.log(`Agent service listening on http://localhost:${PORT}`);
+  console.log(`🚀 Agent Service with Gemini 2.5 listening on http://localhost:${PORT}`);
+  console.log(`🤖 Gemini API: ${process.env.GEMINI_API_KEY ? 'Configured' : 'Not configured'}`);
 });

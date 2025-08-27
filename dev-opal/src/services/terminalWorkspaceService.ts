@@ -1,9 +1,12 @@
 /**
  * Terminal Workspace Service
  * Provides file access to the shared Docker workspace where terminal commands execute
+ * Now integrated with compiler container's shared storage via gRPC
  */
 
 import { IDEFileNode } from '@/contexts/IDEContext';
+import { grpcClient } from './grpcClient';
+import type { ListFilesRequest, ReadFileRequest, WriteFileRequest, DeleteFileRequest, CreateDirectoryRequest } from './grpcClient';
 
 interface WorkspaceFile {
   name: string;
@@ -21,7 +24,6 @@ interface WorkspaceResponse {
 }
 
 class TerminalWorkspaceService {
-  private baseUrl = 'http://localhost:3002'; // Using compiler service as proxy to workspace
   private connected = true;
   private pollingInterval: NodeJS.Timeout | null = null;
   private listeners: Set<() => void> = new Set();
@@ -42,33 +44,23 @@ class TerminalWorkspaceService {
   }
 
   /**
-   * Get files from workspace directory
+   * Get files from workspace directory using gRPC
    */
   async getFiles(relativePath: string = ''): Promise<IDEFileNode[]> {
     try {
-      const response = await fetch(`${this.baseUrl}/workspace/files`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          path: relativePath || '/',
-          action: 'list'
-        }),
-      });
+      const request: ListFilesRequest = {
+        path: relativePath || '/',
+        recursive: false
+      };
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data: WorkspaceResponse = await response.json();
+      const response = await grpcClient.listFiles(request);
       
-      if (!data.success || !data.files) {
-        throw new Error(data.error || 'Failed to get files');
+      if (!response.success || !response.files) {
+        throw new Error(response.error || 'Failed to get files');
       }
 
-      // Convert to IDEFileNode format
-      return data.files.map(file => ({
+      // Convert gRPC response to IDEFileNode format
+      return response.files.map(file => ({
         id: file.path, // Use path as unique ID
         name: file.name,
         type: file.type === 'directory' ? 'folder' : 'file', // Convert 'directory' to 'folder'
@@ -79,139 +71,119 @@ class TerminalWorkspaceService {
         lastModified: new Date(file.modified),
       }));
     } catch (error) {
-      console.error('Error getting workspace files:', error);
+      console.error('Error getting workspace files via gRPC:', error);
       this.connected = false;
       return [];
     }
   }
 
   /**
-   * Get file content from workspace
+   * Get file content from workspace using gRPC
    */
   async getFileContent(filePath: string): Promise<string> {
     try {
-      const response = await fetch(`${this.baseUrl}/workspace/files`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          path: filePath,
-          action: 'read'
-        }),
-      });
+      const request: ReadFileRequest = {
+        path: filePath,
+        encoding: 'utf8'
+      };
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data: WorkspaceResponse = await response.json();
+      const response = await grpcClient.readFile(request);
       
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to read file');
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to read file');
       }
 
-      return data.content || '';
+      return response.content || '';
     } catch (error) {
-      console.error('Error reading workspace file:', error);
+      console.error('Error reading workspace file via gRPC:', error);
       return `Error reading file: ${error instanceof Error ? error.message : 'Unknown error'}`;
     }
   }
 
   /**
-   * Write file to workspace
+   * Write file to workspace using gRPC
    */
   async writeFile(filePath: string, content: string): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/workspace/files`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          path: filePath,
-          content: content,
-          action: 'write'
-        }),
-      });
+      const request: WriteFileRequest = {
+        path: filePath,
+        content: content,
+        encoding: 'utf8'
+      };
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      const response = await grpcClient.writeFile(request);
+      
+      if (response.success) {
+        // Notify listeners of file changes
+        this.notifyChange();
       }
-
-      const data: WorkspaceResponse = await response.json();
-      return data.success;
+      
+      return response.success;
     } catch (error) {
-      console.error('Error writing workspace file:', error);
+      console.error('Error writing workspace file via gRPC:', error);
       return false;
     }
   }
 
   /**
-   * Create directory in workspace
+   * Create directory in workspace using gRPC
    */
   async createDirectory(dirPath: string): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/workspace/files`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          path: dirPath,
-          action: 'mkdir'
-        }),
-      });
+      const request: CreateDirectoryRequest = {
+        path: dirPath
+      };
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      const response = await grpcClient.createDirectory(request);
+      
+      if (response.success) {
+        // Notify listeners of file changes
+        this.notifyChange();
       }
-
-      const data: WorkspaceResponse = await response.json();
-      return data.success;
+      
+      return response.success;
     } catch (error) {
-      console.error('Error creating workspace directory:', error);
+      console.error('Error creating workspace directory via gRPC:', error);
       return false;
     }
   }
 
   /**
-   * Delete file or directory from workspace
+   * Delete file or directory from workspace using gRPC
    */
   async delete(itemPath: string): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/workspace/files`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          path: itemPath,
-          action: 'delete'
-        }),
-      });
+      const request: DeleteFileRequest = {
+        path: itemPath
+      };
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      const response = await grpcClient.deleteFile(request);
+      
+      if (response.success) {
+        // Notify listeners of file changes
+        this.notifyChange();
       }
-
-      const data: WorkspaceResponse = await response.json();
-      return data.success;
+      
+      return response.success;
     } catch (error) {
-      console.error('Error deleting workspace item:', error);
+      console.error('Error deleting workspace item via gRPC:', error);
       return false;
     }
   }
 
   /**
-   * Test connection to workspace service
+   * Test connection to workspace service via gRPC
    */
   async testConnection(): Promise<boolean> {
     try {
+      // Test both gRPC health and file access
+      const healthCheck = await grpcClient.healthCheck();
       const files = await this.getFiles();
-      this.connected = true;
-      return true;
+      
+      this.connected = healthCheck.healthy && files.length >= 0; // files array can be empty but should exist
+      return this.connected;
     } catch (error) {
+      console.error('Workspace connection test failed:', error);
       this.connected = false;
       return false;
     }
@@ -272,6 +244,147 @@ class TerminalWorkspaceService {
    */
   notifyChange(): void {
     this.notifyListeners();
+  }
+
+  /**
+   * Get workspace statistics and information
+   */
+  async getWorkspaceInfo(): Promise<{
+    connected: boolean;
+    totalFiles: number;
+    totalSize: number;
+    lastAccessed: Date;
+  }> {
+    try {
+      const files = await this.getFiles('/');
+      const totalFiles = this.countFilesRecursive(files);
+      const totalSize = this.calculateSizeRecursive(files);
+      
+      return {
+        connected: this.connected,
+        totalFiles,
+        totalSize,
+        lastAccessed: new Date()
+      };
+    } catch (error) {
+      return {
+        connected: false,
+        totalFiles: 0,
+        totalSize: 0,
+        lastAccessed: new Date()
+      };
+    }
+  }
+
+  /**
+   * Get files recursively for workspace tree view
+   */
+  async getFilesRecursive(relativePath: string = ''): Promise<IDEFileNode[]> {
+    try {
+      const request: ListFilesRequest = {
+        path: relativePath || '/',
+        recursive: true
+      };
+
+      const response = await grpcClient.listFiles(request);
+      
+      if (!response.success || !response.files) {
+        throw new Error(response.error || 'Failed to get files recursively');
+      }
+
+      // Convert gRPC response to IDEFileNode format
+      return response.files.map(file => ({
+        id: file.path,
+        name: file.name,
+        type: file.type === 'directory' ? 'folder' : 'file',
+        path: file.path,
+        size: file.size,
+        children: file.type === 'directory' ? [] : undefined,
+        loading: false,
+        lastModified: new Date(file.modified),
+      }));
+    } catch (error) {
+      console.error('Error getting workspace files recursively via gRPC:', error);
+      this.connected = false;
+      return [];
+    }
+  }
+
+  /**
+   * Check if a file or directory exists in the workspace
+   */
+  async exists(itemPath: string): Promise<boolean> {
+    try {
+      const response = await grpcClient.readFile({
+        path: itemPath,
+        encoding: 'utf8'
+      });
+      return response.success;
+    } catch (error) {
+      // If read fails, try to list parent directory to see if item exists
+      try {
+        const parentPath = itemPath.split('/').slice(0, -1).join('/') || '/';
+        const files = await this.getFiles(parentPath);
+        const fileName = itemPath.split('/').pop();
+        return files.some(file => file.name === fileName);
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  /**
+   * Get file/directory metadata
+   */
+  async getMetadata(itemPath: string): Promise<{
+    name: string;
+    type: 'file' | 'folder';
+    size: number;
+    lastModified: Date;
+    exists: boolean;
+  } | null> {
+    try {
+      const parentPath = itemPath.split('/').slice(0, -1).join('/') || '/';
+      const files = await this.getFiles(parentPath);
+      const fileName = itemPath.split('/').pop();
+      
+      const file = files.find(f => f.name === fileName);
+      if (!file) return null;
+
+      return {
+        name: file.name,
+        type: file.type,
+        size: file.size || 0,
+        lastModified: file.lastModified || new Date(),
+        exists: true
+      };
+    } catch (error) {
+      console.error('Error getting file metadata:', error);
+      return null;
+    }
+  }
+
+  // Helper methods
+  private countFilesRecursive(files: IDEFileNode[]): number {
+    let count = 0;
+    for (const file of files) {
+      count++;
+      if (file.children) {
+        count += this.countFilesRecursive(file.children);
+      }
+    }
+    return count;
+  }
+
+  private calculateSizeRecursive(files: IDEFileNode[]): number {
+    let size = 0;
+    for (const file of files) {
+      size += file.size || 0;
+      if (file.children) {
+        size += this.calculateSizeRecursive(file.children);
+      }
+    }
+    return size;
   }
 }
 

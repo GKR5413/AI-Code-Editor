@@ -432,6 +432,48 @@
   .input-wrapper { display: flex; align-items: flex-end; gap: 8px; background: hsl(var(--md-surface-variant)); border-radius: 20px; padding: 8px 12px; }
   .chat-input { flex: 1; border: none; background: transparent; resize: none; font-family: inherit; font-size: 14px; line-height: 1.4; max-height: 120px; outline: none; }
 
+  /* Simple Terminal - Clean and Minimal */
+  .simple-terminal {
+    width: 100%;
+    height: 100%;
+    background: #1e1e1e;
+    border: none;
+    outline: none;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  .terminal-container {
+    width: 100% !important;
+    height: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    outline: none !important;
+  }
+
+  .terminal-container .xterm {
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    outline: none !important;
+  }
+
+  .terminal-container .xterm-viewport {
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    outline: none !important;
+  }
+
+  .terminal-container .xterm-screen {
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    outline: none !important;
+  }
+
   /* VS Code File Explorer Styles */
   .file-explorer {
     background: hsl(var(--sidebar-background));

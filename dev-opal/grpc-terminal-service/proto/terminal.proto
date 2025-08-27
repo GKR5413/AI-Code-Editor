@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package terminal;
+
+// Terminal service for communication between Gemini agent and terminal
+service TerminalService {
+  // Execute a command in the terminal
+  rpc ExecuteCommand(CommandRequest) returns (CommandResponse);
+  
+  // Get terminal output
+  rpc GetOutput(OutputRequest) returns (OutputResponse);
+  
+  // Stream real-time terminal output
+  rpc StreamOutput(StreamRequest) returns (stream OutputChunk);
+  
+  // Create a new terminal session
+  rpc CreateSession(SessionRequest) returns (SessionResponse);
+  
+  // List active terminal sessions
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  
+  // Kill a terminal session
+  rpc KillSession(KillSessionRequest) returns (KillSessionResponse);
+}
+
+// Request to execute a command
+message CommandRequest {
+  string session_id = 1;
+  string command = 2;
+  string working_directory = 3;
+  map<string, string> environment = 4;
+}
+
+// Response from command execution
+message CommandResponse {
+  bool success = 1;
+  string output = 2;
+  string error = 3;
+  int32 exit_code = 4;
+  string session_id = 5;
+}
+
+// Request to get terminal output
+message OutputRequest {
+  string session_id = 1;
+  int32 max_lines = 2;
+}
+
+// Response with terminal output
+message OutputResponse {
+  repeated string lines = 1;
+  bool has_more = 2;
+  string session_id = 3;
+}
+
+// Request to stream terminal output
+message StreamRequest {
+  string session_id = 1;
+  bool follow = 2;
+}
+
+// Chunk of terminal output for streaming
+message OutputChunk {
+  string data = 1;
+  string session_id = 2;
+  int64 timestamp = 3;
+  bool is_error = 4;
+}
+
+// Request to create a new terminal session
+message SessionRequest {
+  string session_id = 1;
+  string shell = 2;
+  string working_directory = 3;
+  map<string, string> environment = 4;
+  int32 cols = 5;
+  int32 rows = 6;
+}
+
+// Response from session creation
+message SessionResponse {
+  bool success = 1;
+  string session_id = 2;
+  string message = 3;
+}
+
+// Request to list active sessions
+message ListSessionsRequest {}
+
+// Response with list of active sessions
+message ListSessionsResponse {
+  repeated SessionInfo sessions = 1;
+}
+
+// Information about a terminal session
+message SessionInfo {
+  string session_id = 1;
+  string shell = 2;
+  string working_directory = 3;
+  int32 cols = 4;
+  int32 rows = 5;
+  bool is_active = 6;
+  int64 created_at = 7;
+}
+
+// Request to kill a session
+message KillSessionRequest {
+  string session_id = 1;
+}
+
+// Response from killing a session
+message KillSessionResponse {
+  bool success = 1;
+  string message = 2;
+}
