@@ -1,0 +1,210 @@
+syntax = "proto3";
+
+package compiler;
+
+// Compiler service for code compilation and execution
+service CompilerService {
+  // Health check
+  rpc HealthCheck(HealthRequest) returns (HealthResponse);
+  
+  // Get supported languages
+  rpc GetSupportedLanguages(LanguagesRequest) returns (LanguagesResponse);
+  
+  // Get compiler info for a specific language
+  rpc GetCompilerInfo(CompilerInfoRequest) returns (CompilerInfoResponse);
+  
+  // Compile code
+  rpc CompileCode(CompileRequest) returns (CompileResponse);
+  
+  // Run code (compile and execute)
+  rpc RunCode(RunRequest) returns (RunResponse);
+  
+  // Stream real-time compilation/execution output
+  rpc StreamExecution(StreamExecutionRequest) returns (stream ExecutionOutput);
+  
+  // File operations in workspace
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
+  rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+  rpc CreateDirectory(CreateDirectoryRequest) returns (CreateDirectoryResponse);
+}
+
+// Health check messages
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string message = 2;
+  map<string, string> services = 3;
+}
+
+// Language support messages
+message LanguagesRequest {}
+
+message LanguagesResponse {
+  bool success = 1;
+  repeated Language languages = 2;
+  string error = 3;
+}
+
+message Language {
+  string name = 1;
+  string extension = 2;
+  bool has_compile_step = 3;
+  string version = 4;
+}
+
+// Compiler info messages
+message CompilerInfoRequest {
+  string language = 1;
+}
+
+message CompilerInfoResponse {
+  bool success = 1;
+  string language = 2;
+  string version_info = 3;
+  CompilerConfig config = 4;
+  string error = 5;
+}
+
+message CompilerConfig {
+  string extension = 1;
+  string compile_command = 2;
+  string run_command = 3;
+  int32 timeout = 4;
+}
+
+// Compilation messages
+message CompileRequest {
+  string language = 1;
+  string code = 2;
+  string filename = 3;
+  CompileOptions options = 4;
+}
+
+message CompileOptions {
+  int32 timeout = 1;
+  int32 compile_timeout = 2;
+  int32 run_timeout = 3;
+  map<string, string> environment = 4;
+}
+
+message CompileResponse {
+  bool success = 1;
+  string stage = 2; // 'compilation' or 'execution'
+  string stdout = 3;
+  string stderr = 4;
+  string error = 5;
+  int32 exit_code = 6;
+  string session_id = 7;
+  int64 execution_time = 8;
+  string message = 9;
+  string output_file = 10;
+  bool timeout = 11;
+}
+
+// Execution messages
+message RunRequest {
+  string language = 1;
+  string code = 2;
+  string filename = 3;
+  string input = 4;
+  CompileOptions options = 5;
+}
+
+message RunResponse {
+  bool success = 1;
+  string stage = 2;
+  string stdout = 3;
+  string stderr = 4;
+  string error = 5;
+  int32 exit_code = 6;
+  string session_id = 7;
+  int64 execution_time = 8;
+  string message = 9;
+  string output_file = 10;
+  bool timeout = 11;
+}
+
+// Streaming execution messages
+message StreamExecutionRequest {
+  string session_id = 1;
+  bool follow = 2;
+}
+
+message ExecutionOutput {
+  string data = 1;
+  string type = 2; // 'stdout', 'stderr', 'status'
+  string session_id = 3;
+  int64 timestamp = 4;
+  bool is_final = 5;
+}
+
+// File operation messages
+message ListFilesRequest {
+  string directory = 1;
+  bool recursive = 2;
+}
+
+message ListFilesResponse {
+  bool success = 1;
+  repeated FileInfo files = 2;
+  string error = 3;
+}
+
+message FileInfo {
+  string name = 1;
+  string path = 2;
+  string type = 3; // 'file', 'directory'
+  int64 size = 4;
+  int64 modified_time = 5;
+  string permissions = 6;
+}
+
+message ReadFileRequest {
+  string path = 1;
+  string encoding = 2; // default: 'utf-8'
+}
+
+message ReadFileResponse {
+  bool success = 1;
+  string content = 2;
+  string encoding = 3;
+  string error = 4;
+}
+
+message WriteFileRequest {
+  string path = 1;
+  string content = 2;
+  string encoding = 3; // default: 'utf-8'
+  bool create_directories = 4;
+}
+
+message WriteFileResponse {
+  bool success = 1;
+  string message = 2;
+  string error = 3;
+}
+
+message DeleteFileRequest {
+  string path = 1;
+  bool recursive = 2; // for directories
+}
+
+message DeleteFileResponse {
+  bool success = 1;
+  string message = 2;
+  string error = 3;
+}
+
+message CreateDirectoryRequest {
+  string path = 1;
+  bool recursive = 2;
+}
+
+message CreateDirectoryResponse {
+  bool success = 1;
+  string message = 2;
+  string error = 3;
+}

@@ -495,6 +495,21 @@ const FileExplorer: React.FC = () => {
     setLoading(false);
   }, [files]);
 
+  // Initialize terminal workspace connection
+  useEffect(() => {
+    const initializeTerminalWorkspace = async () => {
+      console.log('🔧 Initializing Terminal Workspace connection...');
+      try {
+        const isConnected = await terminalWorkspaceService.testConnection();
+        console.log(isConnected ? '✅ Terminal Workspace connected' : '❌ Terminal Workspace connection failed');
+      } catch (error) {
+        console.error('❌ Terminal Workspace initialization error:', error);
+      }
+    };
+
+    initializeTerminalWorkspace();
+  }, []); // Run once on component mount
+
   // Listen for terminal workspace connection requests
   useEffect(() => {
     const handleConnectToTerminalWorkspace = async (event: CustomEvent) => {

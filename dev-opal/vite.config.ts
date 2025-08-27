@@ -6,12 +6,14 @@ import path from "path"
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: '0.0.0.0',
+    port: 5173,
     proxy: {
-      '/agent': {
-        target: 'http://localhost:6000',
+      '/api/agent-proxy': {
+        target: 'http://agent:6000',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/agent/, ''),
-      },
+        rewrite: (path) => path.replace(/^\/api\/agent-proxy/, '/api/agent')
+      }
     }
   },
   resolve: {

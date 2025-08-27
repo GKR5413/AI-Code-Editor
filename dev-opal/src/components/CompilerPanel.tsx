@@ -300,6 +300,15 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
     setExecutionResult(null);
     
     try {
+      // WebSocket interactive execution not implemented in v2.0
+      console.log('ℹ️ WebSocket interactive execution not implemented in v2.0');
+      setInteractiveOutput(prev => [...prev, 'ℹ️ Interactive execution not available in v2.0']);
+      setIsRunning(false);
+      setIsInteractive(false);
+      return;
+      
+      // WebSocket code commented out - not implemented in v2.0
+      /*
       // Connect to WebSocket for interactive execution
       const sessionId = Date.now().toString();
       console.log('🔌 Connecting to WebSocket with sessionId:', sessionId);
@@ -344,6 +353,7 @@ export const CompilerPanel: React.FC<CompilerPanelProps> = ({ className }) => {
         setIsRunning(false);
         setIsInteractive(false);
       };
+      */
       
     } catch (error) {
       console.error('❌ Interactive execution error:', error);

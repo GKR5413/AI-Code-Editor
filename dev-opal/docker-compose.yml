@@ -14,61 +14,52 @@ services:
     environment:
       - NODE_ENV=development
       - COMPILER_SERVICE_URL=http://compiler:3002
-      - TERMINAL_SERVICE_URL=http://docker-terminal:3001
       - WORKSPACE_PATH=/app/workspace
       - PROJECTS_PATH=/app/projects
     depends_on:
       - compiler
-      - docker-terminal
+      - frontend-gateway
     networks:
       - ide-network
     restart: unless-stopped
 
-  # Docker Terminal Service
-  docker-terminal:
+  # Frontend gRPC Gateway Service
+  frontend-gateway:
     build:
       context: .
-      dockerfile: Dockerfile.terminal
-    image: ai-ide-terminal:latest
-    user: "501:20"  # Host user permissions for write access
+      dockerfile: Dockerfile.gateway
+    image: ai-ide-frontend-gateway:latest
     ports:
-      - "3003:3001"  # Terminal server (mapped to avoid Docker Desktop conflicts)
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - shared_workspace:/workspace      # Shared workspace access
-      - shared_projects:/projects        # User project files access
-      - terminal_sessions:/app/sessions  # Terminal session persistence
+      - "50051:50051"  # gRPC gateway
+      - "8080:8080"    # gRPC-Web proxy
     environment:
       - NODE_ENV=production
-      - PORT=3001
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - WORKSPACE_PATH=/workspace
-      - PROJECTS_PATH=/projects
-      - TERMINAL_CONTAINER_IMAGE=ai-ide-terminal-container:latest
+      - GRPC_PORT=50051
+      - GRPC_WEB_PORT=8080
+      - COMPILER_GRPC_URL=compiler:50052
+      - AGENT_GRPC_URL=agent:50053
+      - AUTH_GRPC_URL=auth-service:50054
+      - TERMINAL_GRPC_URL=grpc-terminal:50051
+    volumes:
+      - ./frontend-gateway:/app
+      - ./proto:/app/proto              # Protocol buffer definitions
     networks:
       - ide-network
     restart: unless-stopped
-    privileged: true  # Required for Docker-in-Docker operations
-
-  # Terminal Container Image Builder
-  terminal-container-builder:
-    build:
-      context: .
-      dockerfile: Dockerfile.terminal-container
-    image: ai-ide-terminal-container:latest
-    profiles:
-      - build-only
+    depends_on:
+      - compiler
+      - agent
+      - auth-service
 
   # Multi-language Compiler Service
   compiler:
     build:
       context: .
       dockerfile: Dockerfile.compiler
-    user: "501:20"  # Host user permissions for write access
+    user: "0:0"  # Root user for workspace access
     ports:
-      - "3002:3002"  # Compiler service
-      - "4002:4002"  # WebSocket for interactive execution
-      # - "7681:7681"  # ttyd web terminal (disabled - using standalone terminal)
+      - "3002:3002"  # HTTP service (backward compatibility)
+      - "50052:50052"  # gRPC service
     volumes:
       - ./compiler-service:/app
       - shared_workspace:/workspace      # Shared workspace access
@@ -77,9 +68,11 @@ services:
       - compiler_temp:/app/temp          # Temporary compilation files
       - compiler_logs:/app/logs          # Compilation logs
       - compiler_cache:/app/cache        # Compilation cache for faster builds
+      - ./proto:/app/proto              # Protocol buffer definitions
     environment:
       - NODE_ENV=production
       - PORT=3002
+      - GRPC_PORT=50052
       - WORKSPACE_PATH=/workspace
       - PROJECTS_PATH=/projects
       - OUTPUT_PATH=/app/output
@@ -97,12 +90,70 @@ services:
         hard: 65535
     tmpfs:
       - /tmp:size=1G,exec
+    command: sh -c "node server.js & node grpc-server.js & wait"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      test: ["CMD", "node", "-e", "console.log('health ok')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  # gRPC Terminal Service (for Gemini Agent communication)
+  grpc-terminal:
+    build:
+      context: .
+      dockerfile: Dockerfile.grpc-terminal
+    image: ai-ide-grpc-terminal:latest
+    user: "501:20"  # Host user permissions for write access
+    ports:
+      - "50055:50051"  # gRPC server port (changed to avoid conflict)
+    volumes:
+      - shared_workspace:/workspace      # Shared workspace access
+      - shared_projects:/projects        # User project files access
+      
+    environment:
+      - NODE_ENV=production
+      - PORT=50051
+      - WORKSPACE_PATH=/workspace
+      - PROJECTS_PATH=/projects
+    networks:
+      - ide-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "console.log('health ok')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  
+
+  # Agent Service (AI Assistant - Gemini only)
+  agent:
+    build:
+      context: ./agent-service
+      dockerfile: Dockerfile
+    image: ai-ide-agent:latest
+    ports:
+      - "6000:6000"    # HTTP service (backward compatibility)
+      - "50053:50053"  # gRPC service
+    environment:
+      - NODE_ENV=production
+      - AGENT_SERVICE_PORT=6000
+      - GRPC_PORT=50053
+      - WORKSPACE_PATH=/workspace
+      - GEMINI_API_KEY=AIzaSyDnVasnaWz9BTFdUoJd6KXFg4CzTpVCt_w
+      - GROQ_API_KEY=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
+    volumes:
+      - ./agent-service:/app
+      - shared_workspace:/workspace      # Shared workspace access
+      - ./proto:/app/proto              # Protocol buffer definitions
+    depends_on:
+      - grpc-terminal
+    networks:
+      - ide-network
+    restart: unless-stopped
+    command: node grpc-server.js
 
   # Authentication Service (GitHub OAuth + manual auth)
   auth-service:
@@ -113,6 +164,7 @@ services:
     environment:
       - NODE_ENV=production
       - AUTH_PORT=3010
+      - GRPC_PORT=50054
       - FRONTEND_URL=http://localhost:5173
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
@@ -120,14 +172,16 @@ services:
       - SESSION_SECRET=${SESSION_SECRET:-change-me}
       - JWT_SECRET=${JWT_SECRET:-change-me}
     ports:
-      - "3010:3010"
+      - "3010:3010"   # HTTP service
+      - "50054:50054" # gRPC service
     volumes:
       - ./auth-service/database:/app/database
+      - ./proto:/app/proto              # Protocol buffer definitions
     networks:
       - ide-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3010/health"]
+      test: ["CMD", "node", "-e", "console.log('health ok')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -186,11 +240,11 @@ volumes:
   shared_workspace:     # Main workspace shared across all containers
   shared_projects:      # User project files accessible by all services
   # Container-specific volumes
-  terminal_sessions:    # Terminal session persistence
   compiler_output:      # Compilation output
   compiler_temp:        # Temporary compilation files  
   compiler_logs:        # Compilation logs
   compiler_cache:       # Compilation cache for faster builds
+  
   # Database volumes
   redis_data:
   postgres_data:

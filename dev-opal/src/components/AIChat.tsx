@@ -22,8 +22,8 @@ interface ChatMessage {
 
 // Updated model definitions
 const models = [
-  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { value: 'gemini-2.0-flash-exp', label: 'Gemini 2.5 Flash' },
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Quota Exceeded)' },
   { value: 'llama3-8b-8192', label: 'Llama 3' },
 ];
 
@@ -54,8 +54,9 @@ export const AIChat: React.FC = () => {
     setIsLoading(true);
 
     try {
-      // Updated fetch endpoint to use the proxy
-      const response = await fetch('/agent/api/agent', {
+      console.log('🔍 Attempting to connect to agent service...');
+      // Direct connection to agent service
+      const response = await fetch('/api/agent-proxy', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -72,11 +73,13 @@ export const AIChat: React.FC = () => {
         }),
       });
 
+      console.log('✅ Response received:', response.status, response.statusText);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const data = await response.json();
+      console.log('📦 Response data:', data);
       const currentModel = models.find(m => m.value === selectedModel);
 
       const aiResponse: ChatMessage = {
