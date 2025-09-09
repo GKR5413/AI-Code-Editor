@@ -260,8 +260,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **React Team** - Amazing JavaScript framework
 - **Vite Team** - Next-generation build tooling
 
----
-
-**🚀 Built with modern web technologies for the next generation of cloud-based development environments.**
-
-*🤖 Generated with [Claude Code](https://claude.ai/code)*
