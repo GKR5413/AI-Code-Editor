@@ -1,0 +1,221 @@
+# Enhanced Docker Compose with Integrated Shared Volumes
+# This configuration provides seamless file sharing between IDE, Terminal, and Compiler containers
+
+services:
+  # Main IDE Application
+  ide-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"  # IDE interface
+      - "3004:3004"  # File system API
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+      - shared_workspace:/app/workspace  # Shared workspace for all containers
+      - shared_projects:/app/projects     # User project files
+    environment:
+      - NODE_ENV=development
+      - VITE_COMPILER_SERVICE_URL=http://localhost:3002
+      - VITE_TERMINAL_SERVICE_URL=http://localhost:3003
+      - WORKSPACE_PATH=/app/workspace
+      - PROJECTS_PATH=/app/projects
+      - FILE_SYSTEM_API_PORT=3004
+    depends_on:
+      - compiler
+      - docker-terminal
+    networks:
+      - ide-network
+    restart: unless-stopped
+
+  # Docker Terminal Service with Shared Workspace
+  docker-terminal:
+    build:
+      context: .
+      dockerfile: Dockerfile.terminal
+    image: ai-ide-terminal:latest
+    ports:
+      - "3003:3001"  # Terminal server
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - shared_workspace:/workspace      # Shared workspace access
+      - shared_projects:/projects        # User project files access
+      - terminal_sessions:/app/sessions  # Terminal session persistence
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - WORKSPACE_PATH=/workspace
+      - PROJECTS_PATH=/projects
+      - TERMINAL_CONTAINER_IMAGE=ai-ide-terminal-container:latest
+      - CONTAINER_WORKSPACE_PATH=/workspace
+      - CONTAINER_PROJECTS_PATH=/projects
+    networks:
+      - ide-network
+    restart: unless-stopped
+    privileged: true  # Required for Docker-in-Docker operations
+
+  # Terminal Container Builder
+  terminal-container-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.terminal-container
+    image: ai-ide-terminal-container:latest
+    profiles:
+      - build-only
+
+  # Multi-language Compiler Service with Shared Workspace
+  compiler:
+    build:
+      context: .
+      dockerfile: Dockerfile.compiler
+    ports:
+      - "3002:3002"  # Compiler service
+    volumes:
+      - ./compiler-service:/app
+      - shared_workspace:/workspace      # Shared workspace access
+      - shared_projects:/projects        # User project files access
+      - compiler_output:/app/output      # Compilation output
+      - compiler_temp:/app/temp          # Temporary compilation files
+      - compiler_logs:/app/logs          # Compilation logs
+      - compiler_cache:/app/cache        # Compilation cache for faster builds
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - WORKSPACE_PATH=/workspace
+      - PROJECTS_PATH=/projects
+      - OUTPUT_PATH=/app/output
+      - TEMP_PATH=/app/temp
+      - CACHE_PATH=/app/cache
+    networks:
+      - ide-network
+    restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined  # Allows various system calls needed by compilers
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 65535
+        hard: 65535
+    tmpfs:
+      - /tmp:size=1G,exec
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # File System Service for IDE Integration
+  file-system-api:
+    image: node:20-alpine
+    ports:
+      - "3005:3005"
+    volumes:
+      - shared_workspace:/workspace
+      - shared_projects:/projects
+    environment:
+      - PORT=3005
+      - WORKSPACE_PATH=/workspace
+      - PROJECTS_PATH=/projects
+    working_dir: /app
+    command: >
+      sh -c "
+      cat > server.js << 'EOF'
+      const express = require('express');
+      const fs = require('fs').promises;
+      const path = require('path');
+      const cors = require('cors');
+      
+      const app = express();
+      const PORT = process.env.PORT || 3005;
+      const WORKSPACE_PATH = process.env.WORKSPACE_PATH || '/workspace';
+      const PROJECTS_PATH = process.env.PROJECTS_PATH || '/projects';
+      
+      app.use(cors());
+      app.use(express.json());
+      
+      // List directory contents
+      app.get('/api/files', async (req, res) => {
+        try {
+          const dirPath = req.query.path || WORKSPACE_PATH;
+          const fullPath = path.resolve(dirPath);
+          
+          if (!fullPath.startsWith(WORKSPACE_PATH) && !fullPath.startsWith(PROJECTS_PATH)) {
+            return res.status(403).json({ error: 'Access denied' });
+          }
+          
+          const files = await fs.readdir(fullPath, { withFileTypes: true });
+          const result = files.map(file => ({
+            name: file.name,
+            type: file.isDirectory() ? 'directory' : 'file',
+            path: path.join(dirPath, file.name)
+          }));
+          
+          res.json({ files: result });
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      });
+      
+      // Read file content
+      app.get('/api/file-content', async (req, res) => {
+        try {
+          const filePath = req.query.path;
+          const fullPath = path.resolve(filePath);
+          
+          if (!fullPath.startsWith(WORKSPACE_PATH) && !fullPath.startsWith(PROJECTS_PATH)) {
+            return res.status(403).json({ error: 'Access denied' });
+          }
+          
+          const content = await fs.readFile(fullPath, 'utf8');
+          res.json({ content });
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      });
+      
+      // Write file content
+      app.post('/api/save-file', async (req, res) => {
+        try {
+          const { path: filePath, content } = req.body;
+          const fullPath = path.resolve(filePath);
+          
+          if (!fullPath.startsWith(WORKSPACE_PATH) && !fullPath.startsWith(PROJECTS_PATH)) {
+            return res.status(403).json({ error: 'Access denied' });
+          }
+          
+          await fs.writeFile(fullPath, content, 'utf8');
+          res.json({ message: 'File saved successfully' });
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      });
+      
+      app.listen(PORT, () => {
+        console.log(\`File System API running on port \${PORT}\`);
+      });
+      EOF
+      
+      npm init -y && npm install express cors && node server.js
+      "
+    networks:
+      - ide-network
+    restart: unless-stopped
+
+networks:
+  ide-network:
+    driver: bridge
+
+volumes:
+  node_modules:
+  # Shared volumes for seamless integration
+  shared_workspace:     # Main workspace shared across all containers
+  shared_projects:      # User project files accessible by all services
+  # Container-specific volumes
+  terminal_sessions:    # Terminal session persistence
+  compiler_output:      # Compilation output
+  compiler_temp:        # Temporary compilation files  
+  compiler_logs:        # Compilation logs
+  compiler_cache:       # Compilation cache for faster builds

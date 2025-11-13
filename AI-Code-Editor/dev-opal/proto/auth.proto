@@ -1,0 +1,213 @@
+syntax = "proto3";
+
+package auth;
+
+// Authentication service
+service AuthService {
+  // Health check
+  rpc HealthCheck(HealthRequest) returns (HealthResponse);
+  
+  // User authentication
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  
+  // OAuth flows
+  rpc GitHubAuth(GitHubAuthRequest) returns (GitHubAuthResponse);
+  rpc GitHubCallback(GitHubCallbackRequest) returns (GitHubCallbackResponse);
+  
+  // OTP verification
+  rpc SendOTP(SendOTPRequest) returns (SendOTPResponse);
+  rpc VerifyOTP(VerifyOTPRequest) returns (VerifyOTPResponse);
+  rpc ResendOTP(ResendOTPRequest) returns (ResendOTPResponse);
+  
+  // User management
+  rpc GetUserProfile(GetUserProfileRequest) returns (GetUserProfileResponse);
+  rpc UpdateUserProfile(UpdateUserProfileRequest) returns (UpdateUserProfileResponse);
+  
+  // Token validation
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+}
+
+// Health check
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string message = 2;
+  map<string, string> services = 3;
+}
+
+// Authentication messages
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+  bool remember_me = 3;
+}
+
+message LoginResponse {
+  bool success = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+  User user = 4;
+  string error = 5;
+  int64 expires_at = 6;
+}
+
+message RegisterRequest {
+  string email = 1;
+  string password = 2;
+  string confirm_password = 3;
+  string name = 4;
+}
+
+message RegisterResponse {
+  bool success = 1;
+  string message = 2;
+  string error = 3;
+  bool requires_otp = 4;
+}
+
+message LogoutRequest {
+  string token = 1;
+}
+
+message LogoutResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+  bool success = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+  int64 expires_at = 4;
+  string error = 5;
+}
+
+// OAuth messages
+message GitHubAuthRequest {
+  string redirect_uri = 1;
+  repeated string scopes = 2;
+}
+
+message GitHubAuthResponse {
+  bool success = 1;
+  string auth_url = 2;
+  string state = 3;
+  string error = 4;
+}
+
+message GitHubCallbackRequest {
+  string code = 1;
+  string state = 2;
+}
+
+message GitHubCallbackResponse {
+  bool success = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+  User user = 4;
+  string error = 5;
+  int64 expires_at = 6;
+}
+
+// OTP messages
+message SendOTPRequest {
+  string email = 1;
+  string type = 2; // 'email', 'sms'
+}
+
+message SendOTPResponse {
+  bool success = 1;
+  string message = 2;
+  string error = 3;
+  int64 expires_at = 4;
+}
+
+message VerifyOTPRequest {
+  string email = 1;
+  string otp = 2;
+  string type = 3;
+}
+
+message VerifyOTPResponse {
+  bool success = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+  User user = 4;
+  string message = 5;
+  string error = 6;
+  int64 expires_at = 7;
+}
+
+message ResendOTPRequest {
+  string email = 1;
+  string type = 2;
+}
+
+message ResendOTPResponse {
+  bool success = 1;
+  string message = 2;
+  string error = 3;
+  int64 expires_at = 4;
+}
+
+// User management
+message GetUserProfileRequest {
+  string token = 1;
+}
+
+message GetUserProfileResponse {
+  bool success = 1;
+  User user = 2;
+  string error = 3;
+}
+
+message UpdateUserProfileRequest {
+  string token = 1;
+  UserUpdate updates = 2;
+}
+
+message UpdateUserProfileResponse {
+  bool success = 1;
+  User user = 2;
+  string message = 3;
+  string error = 4;
+}
+
+// Token validation
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+message ValidateTokenResponse {
+  bool valid = 1;
+  User user = 2;
+  string error = 3;
+  int64 expires_at = 4;
+}
+
+// User model
+message User {
+  string id = 1;
+  string email = 2;
+  string name = 3;
+  string avatar_url = 4;
+  string provider = 5; // 'local', 'github'
+  map<string, string> metadata = 6;
+  int64 created_at = 7;
+  int64 updated_at = 8;
+}
+
+message UserUpdate {
+  string name = 1;
+  string email = 2;
+  string avatar_url = 3;
+  map<string, string> metadata = 4;
+}

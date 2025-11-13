@@ -1,0 +1,29 @@
+{
+  "name": "claude-agent-service",
+  "version": "1.0.0",
+  "description": "Microservice for Anthropic Claude integration (AI-Agent)",
+  "main": "server.js",
+  "type": "module",
+  "bin": {
+    "claude": "./cli.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "dotenv": "^16.4.7",
+    "winston": "^3.18.0",
+    "@anthropic-ai/sdk": "^0.68.0",
+    "cors": "^2.8.5",
+    "@ai-sdk/anthropic": "^1.0.8"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}

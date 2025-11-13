@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package agent;
+
+// Agent Service - AI-powered code assistant with Gemini integration
+service AgentService {
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+
+  // Send a message to the AI agent
+  rpc SendMessage(MessageRequest) returns (MessageResponse);
+
+  // Stream a conversation with the AI agent
+  rpc StreamConversation(StreamRequest) returns (stream StreamChunk);
+
+  // Generate code based on a prompt
+  rpc GenerateCode(CodeGenerationRequest) returns (CodeGenerationResponse);
+
+  // Get list of supported AI models
+  rpc GetSupportedModels(ModelsRequest) returns (ModelsResponse);
+}
+
+// Health check messages
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string message = 2;
+  map<string, string> services = 3;
+}
+
+// Message for AI conversation
+message ChatMessage {
+  string role = 1;      // "user" or "assistant"
+  string content = 2;   // Message content
+}
+
+// Request for sending a message
+message MessageRequest {
+  string model = 1;                    // Model ID to use
+  repeated ChatMessage messages = 2;   // Conversation history
+  GenerationOptions options = 3;       // Optional generation parameters
+}
+
+// Response from AI
+message MessageResponse {
+  bool success = 1;
+  string response = 2;
+  string model = 3;
+  int64 timestamp = 4;
+  string error = 5;
+  TokenUsage token_usage = 6;
+}
+
+// Token usage information
+message TokenUsage {
+  int32 prompt_tokens = 1;
+  int32 completion_tokens = 2;
+  int32 total_tokens = 3;
+}
+
+// Generation options
+message GenerationOptions {
+  int32 max_tokens = 1;
+  float temperature = 2;
+  repeated string stop_sequences = 3;
+  float top_p = 4;
+  int32 top_k = 5;
+}
+
+// Streaming request
+message StreamRequest {
+  string model = 1;
+  repeated ChatMessage messages = 2;
+  GenerationOptions options = 3;
+}
+
+// Streaming chunk
+message StreamChunk {
+  string content = 1;      // Chunk of text
+  string type = 2;         // "text", "status", "error", "done"
+  bool is_final = 3;       // Is this the final chunk?
+  int64 timestamp = 4;
+  string model = 5;
+}
+
+// Code generation request
+message CodeGenerationRequest {
+  string prompt = 1;
+  string language = 2;
+  string model = 3;
+  CodeGenerationOptions options = 4;
+}
+
+// Code generation options
+message CodeGenerationOptions {
+  bool include_comments = 1;
+  bool include_tests = 2;
+  string style = 3;              // Code style preference
+  repeated string frameworks = 4; // Frameworks to use
+}
+
+// Code generation response
+message CodeGenerationResponse {
+  bool success = 1;
+  string code = 2;
+  string language = 3;
+  string explanation = 4;
+  repeated string suggestions = 5;
+  string error = 6;
+  int64 timestamp = 7;
+}
+
+// Models list request
+message ModelsRequest {}
+
+// Model information
+message ModelInfo {
+  string id = 1;
+  string name = 2;
+  string provider = 3;
+  string description = 4;
+  int32 max_tokens = 5;
+  bool supports_streaming = 6;
+  repeated string capabilities = 7;
+}
+
+// Models list response
+message ModelsResponse {
+  bool success = 1;
+  repeated ModelInfo models = 2;
+  string error = 3;
+}

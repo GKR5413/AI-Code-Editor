@@ -1,0 +1,28 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install system dependencies for gRPC
+RUN apk add --no-cache python3 make g++
+
+# Copy package files
+COPY frontend-gateway/package*.json ./
+
+# Install Node.js dependencies
+RUN npm ci --only=production --legacy-peer-deps
+
+# Copy application files
+COPY frontend-gateway/ ./
+COPY proto/ ./proto/
+
+# Install gRPC and other dependencies if not already installed
+RUN npm install @grpc/grpc-js @grpc/proto-loader dotenv --legacy-peer-deps
+
+# Create required directories
+RUN mkdir -p /app/logs
+
+# Expose gRPC and gRPC-Web ports
+EXPOSE 50051 8080
+
+# Start the gateway service
+CMD ["node", "grpc-gateway.js"]
