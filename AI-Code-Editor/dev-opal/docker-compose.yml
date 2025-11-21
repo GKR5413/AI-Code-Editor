@@ -4,6 +4,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    env_file:
+      - .env.docker
     ports:
       - "5173:5173"  # Vite dev server
     volumes:
@@ -134,6 +136,8 @@ services:
       context: ./agent-service
       dockerfile: Dockerfile
     image: ai-ide-agent:latest
+    env_file:
+      - .env.docker
     ports:
       - "6000:6000"    # HTTP service (backward compatibility)
       - "50053:50053"  # gRPC service
@@ -144,6 +148,10 @@ services:
       - WORKSPACE_PATH=/workspace
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - ANTHROPIC_API_KEY=${CLAUDE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - COHERE_API_KEY=${COHERE_API_KEY}
     volumes:
       - ./agent-service:/app
       - shared_workspace:/workspace      # Shared workspace access

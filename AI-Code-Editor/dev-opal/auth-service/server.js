@@ -18,6 +18,23 @@ const database = require('./database/connection');
 const app = express();
 const PORT = process.env.AUTH_PORT || 3010;
 
+// Email transporter configuration
+let emailTransporter = null;
+if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    emailTransporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: parseInt(process.env.SMTP_PORT) || 587,
+        secure: false, // true for 465, false for other ports
+        auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+        },
+    });
+    console.log('📧 Email service configured:', process.env.SMTP_HOST);
+} else {
+    console.log('⚠️  Email service not configured - OTPs will only be logged to console');
+}
+
 // Security middleware
 app.use(helmet({
     contentSecurityPolicy: {
@@ -599,6 +616,291 @@ app.post('/api/logout', (req, res) => {
             res.json({ message: 'Logged out successfully' });
         });
     });
+});
+
+// Password reset request - Step 1: Verify user exists and send OTP
+app.post('/api/forgot-password', [
+    body('email').isEmail().normalizeEmail(),
+], async (req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ error: 'Invalid email address' });
+        }
+
+        const { email } = req.body;
+
+        // Find user by email - verify user exists
+        const user = await new Promise((resolve, reject) => {
+            database.db.get(
+                'SELECT * FROM users WHERE email = ? AND is_active = 1',
+                [email],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        // If user doesn't exist, return error (for password reset, we verify the user exists)
+        if (!user) {
+            console.log(`Password reset requested for non-existent email: ${email}`);
+            return res.status(404).json({
+                error: 'No account found with this email address. Please check and try again.'
+            });
+        }
+
+        // Generate 6-digit OTP
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+        // Delete any existing OTP for this email
+        await new Promise((resolve, reject) => {
+            database.db.run(
+                'DELETE FROM email_verifications WHERE email = ?',
+                [email],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Store OTP in database
+        await new Promise((resolve, reject) => {
+            database.db.run(
+                'INSERT INTO email_verifications (email, code, expires_at, used) VALUES (?, ?, ?, ?)',
+                [email, otpCode, expiresAt.toISOString(), false],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Log OTP for development
+        console.log(`🔐 Password reset OTP for ${email}: ${otpCode}`);
+        console.log(`⏰ OTP expires at: ${expiresAt.toISOString()}`);
+        console.log(`👤 User found: ${user.username} (ID: ${user.id})`);
+
+        // Send email with OTP if email service is configured
+        if (emailTransporter) {
+            try {
+                await emailTransporter.sendMail({
+                    from: `"VelocIDE" <${process.env.SMTP_USER}>`,
+                    to: email,
+                    subject: 'VelocIDE - Password Reset OTP',
+                    html: `
+                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                            <h2 style="color: #4F46E5;">Password Reset Request</h2>
+                            <p>Hello ${user.username},</p>
+                            <p>You requested to reset your password for your VelocIDE account.</p>
+                            <p>Your One-Time Password (OTP) is:</p>
+                            <div style="background-color: #F3F4F6; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 8px; margin: 20px 0; border-radius: 8px;">
+                                ${otpCode}
+                            </div>
+                            <p><strong>This OTP will expire in 10 minutes.</strong></p>
+                            <p>If you didn't request this password reset, please ignore this email.</p>
+                            <hr style="margin: 30px 0; border: none; border-top: 1px solid #E5E7EB;">
+                            <p style="color: #6B7280; font-size: 12px;">
+                                This is an automated email from VelocIDE. Please do not reply to this email.
+                            </p>
+                        </div>
+                    `,
+                    text: `
+                        Password Reset Request
+
+                        Hello ${user.username},
+
+                        You requested to reset your password for your VelocIDE account.
+
+                        Your One-Time Password (OTP) is: ${otpCode}
+
+                        This OTP will expire in 10 minutes.
+
+                        If you didn't request this password reset, please ignore this email.
+                    `
+                });
+                console.log(`📧 Password reset email sent to ${email}`);
+            } catch (emailError) {
+                console.error('Failed to send email:', emailError);
+                // Continue even if email fails - OTP is still valid
+            }
+        }
+
+        res.json({
+            message: 'OTP has been sent to your email address. Please check your inbox.',
+            email: email,
+            // In development, return the OTP for testing
+            ...(process.env.NODE_ENV === 'development' && { otp: otpCode })
+        });
+
+    } catch (error) {
+        console.error('Forgot password error:', error);
+        res.status(500).json({ error: 'Failed to process password reset request' });
+    }
+});
+
+// Password reset - Step 2: Verify OTP
+app.post('/api/verify-reset-otp', [
+    body('email').isEmail().normalizeEmail(),
+    body('otp').isLength({ min: 6, max: 6 }),
+], async (req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ error: 'Invalid email or OTP' });
+        }
+
+        const { email, otp } = req.body;
+
+        // Find valid OTP
+        const otpRecord = await new Promise((resolve, reject) => {
+            database.db.get(
+                `SELECT * FROM email_verifications
+                 WHERE email = ?
+                 AND code = ?
+                 AND used = 0
+                 AND expires_at > datetime('now')`,
+                [email, otp],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!otpRecord) {
+            return res.status(400).json({ error: 'Invalid or expired OTP' });
+        }
+
+        // Mark OTP as used
+        await new Promise((resolve, reject) => {
+            database.db.run(
+                'UPDATE email_verifications SET used = 1 WHERE id = ?',
+                [otpRecord.id],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Generate a reset token for the password change
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+        // Get user ID
+        const user = await new Promise((resolve, reject) => {
+            database.db.get(
+                'SELECT id FROM users WHERE email = ?',
+                [email],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        // Store reset token
+        await new Promise((resolve, reject) => {
+            database.db.run(
+                'INSERT INTO password_resets (user_id, token, expires_at, used) VALUES (?, ?, ?, ?)',
+                [user.id, hashedToken, expiresAt.toISOString(), false],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        console.log(`✅ OTP verified for ${email}, reset token generated`);
+
+        res.json({
+            message: 'OTP verified successfully',
+            resetToken: resetToken,
+            expiresAt: expiresAt.toISOString()
+        });
+
+    } catch (error) {
+        console.error('OTP verification error:', error);
+        res.status(500).json({ error: 'Failed to verify OTP' });
+    }
+});
+
+// Password reset - Step 3: Update password with reset token
+app.post('/api/reset-password', [
+    body('token').notEmpty(),
+    body('password').isLength({ min: 8 }),
+], async (req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ error: 'Invalid token or password' });
+        }
+
+        const { token, password } = req.body;
+
+        // Hash the token to match the stored hash
+        const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+        // Find valid reset token
+        const resetRecord = await new Promise((resolve, reject) => {
+            database.db.get(
+                `SELECT pr.*, u.email, u.username
+                 FROM password_resets pr
+                 JOIN users u ON pr.user_id = u.id
+                 WHERE pr.token = ?
+                 AND pr.used = 0
+                 AND pr.expires_at > datetime('now')`,
+                [hashedToken],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!resetRecord) {
+            return res.status(400).json({ error: 'Invalid or expired reset token' });
+        }
+
+        // Hash the new password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Update user's password
+        await new Promise((resolve, reject) => {
+            database.db.run(
+                'UPDATE users SET password_hash = ?, updated_at = datetime(\'now\') WHERE id = ?',
+                [hashedPassword, resetRecord.user_id],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Mark token as used
+        await new Promise((resolve, reject) => {
+            database.db.run(
+                'UPDATE password_resets SET used = 1 WHERE id = ?',
+                [resetRecord.id],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        console.log(`✅ Password reset successful for user: ${resetRecord.username}`);
+
+        res.json({ message: 'Password reset successful. You can now log in with your new password.' });
+
+    } catch (error) {
+        console.error('Reset password error:', error);
+        res.status(500).json({ error: 'Failed to reset password' });
+    }
 });
 
 // Login attempts tracking middleware

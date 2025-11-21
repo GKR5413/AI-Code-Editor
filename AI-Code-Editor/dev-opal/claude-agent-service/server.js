@@ -55,6 +55,10 @@ const anthropic = new Anthropic({
 
 // Available Claude models
 const AVAILABLE_MODELS = [
+  'claude-sonnet-4.5',
+  'claude-opus-4.1',
+  'claude-sonnet-4-5',
+  'claude-opus-4',
   'claude-3-5-sonnet-20241022',
   'claude-3-5-opus-20241022',
   'claude-3-5-haiku-20241022',

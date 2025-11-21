@@ -354,13 +354,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const resetPassword = async (_email: string) => {
+  const resetPassword = async (email: string) => {
     dispatch({ type: 'AUTH_START' });
-    
+
     try {
-      // Note: This would be implemented for password reset
-      // For now, redirect to GitHub OAuth
-      throw new Error('Password reset not available. Please use GitHub authentication.');
+      const response = await makeAuthRequest('/api/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      });
+
+      dispatch({ type: 'AUTH_CLEAR_ERROR' });
+      return response;
     } catch (error: any) {
       dispatch({ type: 'AUTH_FAILURE', payload: error.message });
       throw error;

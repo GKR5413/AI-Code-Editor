@@ -7,6 +7,7 @@ const morgan = require('morgan');
 const path = require('path');
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 const Groq = require('groq-sdk');
+const Anthropic = require('@anthropic-ai/sdk');
 
 const app = express();
 
@@ -36,6 +37,11 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY
 });
 
+// Initialize Anthropic for Claude models
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY
+});
+
 // Safety settings for content generation
 const safetySettings = [
   {
@@ -56,13 +62,21 @@ const safetySettings = [
   },
 ];
 
-// Available models configuration (Updated Oct 2025)
+// Available models configuration (Updated Nov 2025)
 const AVAILABLE_MODELS = [
-  // Gemini models
+  // Gemini 3.0 models (Future)
+  'gemini-3-pro-preview',
+  // Gemini 2.5 models (Latest - Stable)
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  // Gemini 2.0 models (Experimental)
   'gemini-2.0-flash-exp',
+  'gemini-2.0-pro-exp',
+  // Gemini 1.5 models (Legacy)
+  'gemini-1.5-flash',
   'gemini-1.5-flash-8b',
   'gemini-1.5-pro',
-  // Groq/Llama models (ACTIVE - verified Oct 2025)
+  // Groq/Llama models (ACTIVE - verified Nov 2025)
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
   'meta-llama/llama-4-maverick-17b-128e-instruct',
@@ -75,12 +89,25 @@ const AVAILABLE_MODELS = [
   'llama3-8b-8192',   // OLD NAME - Maps to llama-3.1-8b-instant for backward compat
   'llama4',        // Maps to llama-4-maverick (newest)
   'llama4-maverick',  // Maps to llama-4-maverick
-  'llama4-scout'      // Maps to llama-4-scout
+  'llama4-scout',     // Maps to llama-4-scout
+  // Claude models (Latest - 2025)
+  'claude-sonnet-4.5',              // Claude 4.5 Sonnet
+  'claude-opus-4.1',                // Claude 4.1 Opus
+  'claude-sonnet-4-5',              // Latest - Released 2025
+  'claude-opus-4',                  // Claude 4 Opus - Top tier
+  'claude-sonnet-4',                // Claude 4 Sonnet - Fast & capable
+  'claude-3-5-sonnet-20241022',     // Claude 3.5 Sonnet - Upgraded
+  'claude-3-5-haiku-20241022'       // Claude 3.5 Haiku - Fast
 ];
 
 // Model provider mapping
 const MODEL_PROVIDERS = {
+  'gemini-3-pro-preview': 'gemini',
+  'gemini-2.5-flash': 'gemini',
+  'gemini-2.5-pro': 'gemini',
   'gemini-2.0-flash-exp': 'gemini',
+  'gemini-2.0-pro-exp': 'gemini',
+  'gemini-1.5-flash': 'gemini',
   'gemini-1.5-flash-8b': 'gemini',
   'gemini-1.5-pro': 'gemini',
   'llama-3.3-70b-versatile': 'groq',
@@ -94,7 +121,14 @@ const MODEL_PROVIDERS = {
   'llama3-8b-8192': 'groq',   // OLD - for backward compatibility
   'llama4': 'groq',
   'llama4-maverick': 'groq',
-  'llama4-scout': 'groq'
+  'llama4-scout': 'groq',
+  'claude-sonnet-4.5': 'claude',
+  'claude-opus-4.1': 'claude',
+  'claude-sonnet-4-5': 'claude',
+  'claude-opus-4': 'claude',
+  'claude-sonnet-4': 'claude',
+  'claude-3-5-sonnet-20241022': 'claude',
+  'claude-3-5-haiku-20241022': 'claude'
 };
 
 // Model aliases (maps friendly names to actual model IDs)
@@ -114,14 +148,16 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     message: 'Multi-Provider AI Agent Service is running!',
-    version: '2.1.0',
+    version: '2.2.0',
     providers: {
       gemini: !!process.env.GEMINI_API_KEY,
-      groq: !!process.env.GROQ_API_KEY
+      groq: !!process.env.GROQ_API_KEY,
+      claude: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY)
     },
     models: {
       gemini: AVAILABLE_MODELS.filter(m => MODEL_PROVIDERS[m] === 'gemini'),
-      groq: AVAILABLE_MODELS.filter(m => MODEL_PROVIDERS[m] === 'groq')
+      groq: AVAILABLE_MODELS.filter(m => MODEL_PROVIDERS[m] === 'groq'),
+      claude: AVAILABLE_MODELS.filter(m => MODEL_PROVIDERS[m] === 'claude')
     },
     total_models: AVAILABLE_MODELS.length
   });
@@ -134,11 +170,15 @@ app.get('/api/models', (req, res) => {
     models: AVAILABLE_MODELS.map(model => {
       const actualModel = MODEL_ALIASES[model] || model;
       const provider = MODEL_PROVIDERS[actualModel];
+      let providerName = 'Google Gemini';
+      if (provider === 'groq') providerName = 'Groq (Llama)';
+      else if (provider === 'claude') providerName = 'Anthropic Claude';
+
       return {
         id: model,
         actualModel: actualModel !== model ? actualModel : undefined,
         name: model.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-        provider: provider === 'groq' ? 'Groq (Llama)' : 'Google Gemini'
+        provider: providerName
       };
     })
   });
@@ -284,7 +324,7 @@ async function executeTool(toolName, parameters) {
   const WORKSPACE_PATH = process.env.WORKSPACE_PATH || '/workspace';
 
   try {
-    switch(toolName) {
+    switch (toolName) {
       case 'execute_command': {
         const { command, workingDirectory = '' } = parameters;
         const cwd = path.join(WORKSPACE_PATH, workingDirectory);
@@ -484,6 +524,8 @@ app.post('/api/agent', async (req, res) => {
     // Route to appropriate provider
     if (provider === 'groq') {
       return await handleGroqRequest(req, res, actualModel, messages, temperature, maxTokens);
+    } else if (provider === 'claude') {
+      return await handleClaudeRequest(req, res, actualModel, messages, temperature, maxTokens);
     } else {
       return await handleGeminiRequest(req, res, actualModel, messages, temperature, maxTokens);
     }
@@ -535,6 +577,65 @@ async function handleGroqRequest(req, res, model, messages, temperature, maxToke
     console.error('❌ Groq API Error:', error);
     return res.status(500).json({
       error: 'Groq API error',
+      details: error.message
+    });
+  }
+}
+
+// Handle Claude (Anthropic) requests
+async function handleClaudeRequest(req, res, model, messages, temperature, maxTokens) {
+  try {
+    if (!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_API_KEY) {
+      return res.status(503).json({
+        error: 'Claude API key not configured'
+      });
+    }
+
+    // Convert messages to Claude format - separate system message
+    let systemMessage = '';
+    const claudeMessages = [];
+
+    for (const msg of messages) {
+      if (msg.role === 'system') {
+        systemMessage = msg.content;
+      } else {
+        claudeMessages.push({
+          role: msg.role,
+          content: msg.content
+        });
+      }
+    }
+
+    const requestBody = {
+      model,
+      messages: claudeMessages,
+      temperature,
+      max_tokens: maxTokens,
+    };
+
+    if (systemMessage) {
+      requestBody.system = systemMessage;
+    }
+
+    const message = await anthropic.messages.create(requestBody);
+
+    const responseText = message.content[0]?.text || '';
+
+    res.json({
+      response: responseText,
+      model,
+      provider: 'claude',
+      timestamp: new Date().toISOString(),
+      usage: {
+        promptTokens: message.usage?.input_tokens || 0,
+        completionTokens: message.usage?.output_tokens || 0,
+        totalTokens: (message.usage?.input_tokens || 0) + (message.usage?.output_tokens || 0)
+      }
+    });
+  } catch (error) {
+    console.error('❌ Claude API Error:', error);
+    return res.status(500).json({
+      error: 'Claude API error',
       details: error.message
     });
   }

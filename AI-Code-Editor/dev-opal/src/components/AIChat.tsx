@@ -20,11 +20,31 @@ interface ChatMessage {
   model?: string;
 }
 
-// Updated model definitions
+// Updated model definitions with latest Groq and Claude models (Nov 2025)
 const models = [
-  { value: 'gemini-2.0-flash-exp', label: 'Gemini 2.5 Flash' },
-  { value: 'llama3-8b-8192', label: 'Llama 3' },
-  { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
+  // Gemini models (Google AI)
+  { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro (Preview)', provider: 'gemini' },
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', provider: 'gemini' },
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', provider: 'gemini' },
+
+  // Groq/Llama 4 models (Latest - April 2025)
+  { value: 'meta-llama/llama-4-maverick-17b-128e-instruct', label: 'Llama 4 Maverick (17B)', provider: 'groq' },
+  { value: 'meta-llama/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout (17B)', provider: 'groq' },
+
+  // Groq/Llama 3.3 models (Current generation)
+  { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile', provider: 'groq' },
+  { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant', provider: 'groq' },
+
+  // Claude 4 models (Latest - 2025)
+  { value: 'claude-sonnet-4.5', label: 'Claude Sonnet 4.5', provider: 'claude' },
+  { value: 'claude-opus-4.1', label: 'Claude Opus 4.1', provider: 'claude' },
+  { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5 (Latest)', provider: 'claude' },
+  { value: 'claude-opus-4', label: 'Claude Opus 4', provider: 'claude' },
+  { value: 'claude-sonnet-4', label: 'Claude Sonnet 4', provider: 'claude' },
+
+  // Claude 3.5 models
+  { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', provider: 'claude' },
+  { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', provider: 'claude' },
 ];
 
 export const AIChat: React.FC = () => {
@@ -55,6 +75,11 @@ export const AIChat: React.FC = () => {
 
     try {
       console.log('🔍 Attempting to connect to agent service...');
+
+      // Determine provider from selected model
+      const currentModel = models.find(m => m.value === selectedModel);
+      const provider = currentModel?.provider || 'groq';
+
       // Direct connection to agent service
       const response = await fetch('/api/agent-proxy', {
         method: 'POST',
@@ -62,6 +87,7 @@ export const AIChat: React.FC = () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          provider: provider,
           model: selectedModel,
           messages: [
             ...messages.map(msg => ({
@@ -80,7 +106,6 @@ export const AIChat: React.FC = () => {
 
       const data = await response.json();
       console.log('📦 Response data:', data);
-      const currentModel = models.find(m => m.value === selectedModel);
 
       const aiResponse: ChatMessage = {
         id: (Date.now() + 1).toString(),

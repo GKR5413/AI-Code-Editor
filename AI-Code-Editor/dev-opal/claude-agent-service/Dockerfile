@@ -3,7 +3,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy package files
+# Install system dependencies for gRPC and native modules
+RUN apk add --no-cache python3 make g++
 COPY package*.json ./
 
 # Install dependencies
