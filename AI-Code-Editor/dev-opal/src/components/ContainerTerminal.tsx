@@ -65,118 +65,50 @@ export const ContainerTerminal: React.FC = () => {
 
   const connectToBackend = async (terminal: Terminal) => {
     try {
-      // Try to connect to compiler service terminal endpoint
-      const response = await fetch('http://localhost:3002/terminal/session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          session_id: sessionIdRef.current,
-          shell: 'bash',
-          working_directory: '/workspace',
-          cols: terminal.cols,
-          rows: terminal.rows
-        })
+      // Connect to enhanced terminal server via WebSocket
+      const ws = new WebSocket('ws://localhost:3001/terminal');
+
+      ws.onopen = () => {
+        console.log('✅ WebSocket connected to enhanced terminal server');
+        setStatus('Connected');
+      };
+
+      ws.onmessage = (event) => {
+        terminal.write(event.data);
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        throw new Error('WebSocket connection failed');
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket connection closed');
+        setStatus('Disconnected');
+        terminal.write('\r\n\x1b[31m✗ Connection closed\x1b[0m\r\n');
+      };
+
+      // Setup terminal input to send to WebSocket
+      terminal.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(data);
+        }
       });
 
-      if (response.ok) {
-        setStatus('Connected');
+      // Store WebSocket reference for cleanup
+      (terminal as any).ws = ws;
 
-        // Setup command execution
-        setupCommandExecution(terminal);
-        
-        // Show initial prompt
-        terminal.write('$ ');
-      } else {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
     } catch (error) {
       console.error('Backend connection error:', error);
       terminal.write('Failed to connect to container terminal\r\n');
       terminal.write('Using local echo mode instead\r\n\r\n');
       setStatus('Local Mode');
-      
+
       // Fallback to local mode
       setupLocalMode(terminal);
     }
   };
 
-  const setupCommandExecution = (terminal: Terminal) => {
-    let currentLine = '';
-    
-    terminal.onData(async (data) => {
-      if (data === '\r' || data === '\n') {
-        terminal.write('\r\n');
-        
-        if (currentLine.trim()) {
-          await executeCommand(terminal, currentLine.trim());
-        } else {
-          terminal.write('$ ');
-        }
-        currentLine = '';
-      } else if (data === '\u007F') { // Backspace
-        if (currentLine.length > 0) {
-          currentLine = currentLine.slice(0, -1);
-          terminal.write('\b \b');
-        }
-      } else if (data >= ' ') {
-        currentLine += data;
-        terminal.write(data);
-      }
-    });
-  };
-
-  const executeCommand = async (terminal: Terminal, command: string) => {
-    try {
-      const response = await fetch('http://localhost:3002/terminal/execute', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          session_id: sessionIdRef.current,
-          command: command,
-          working_directory: '/workspace'
-        })
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        if (result.output) {
-          // Properly format the output with correct line breaks
-          let formattedOutput = result.output;
-          
-          // Convert Unix line endings to terminal line endings
-          formattedOutput = formattedOutput.replace(/\n/g, '\r\n');
-          
-          // Ensure proper spacing for ls output
-          if (command.trim().startsWith('ls')) {
-            // For ls command, format as proper lines
-            formattedOutput = formattedOutput
-              .split('\r\n')
-              .filter(line => line.trim())
-              .join('\r\n');
-            
-            if (formattedOutput && !formattedOutput.endsWith('\r\n')) {
-              formattedOutput += '\r\n';
-            }
-          }
-          
-          terminal.write(formattedOutput);
-        }
-        if (result.error) {
-          terminal.write(`${result.error.replace(/\n/g, '\r\n')}`);
-        }
-      } else {
-        terminal.write(`HTTP Error: ${response.status}\r\n`);
-      }
-    } catch (error) {
-      terminal.write(`Command error: ${error}\r\n`);
-    }
-    
-    terminal.write('$ ');
-  };
 
   const setupLocalMode = (terminal: Terminal) => {
     let currentLine = '';
@@ -223,6 +155,11 @@ export const ContainerTerminal: React.FC = () => {
   useEffect(() => {
     return () => {
       if (xtermRef.current) {
+        // Close WebSocket if it exists
+        const ws = (xtermRef.current as any).ws;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
         xtermRef.current.dispose();
       }
     };

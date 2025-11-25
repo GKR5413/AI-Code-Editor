@@ -473,7 +473,7 @@ const FileExplorer: React.FC = () => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['.']));
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'local' | 'terminal' | 'universal' | 'none'>('none');
+  const [viewMode, setViewMode] = useState<'local' | 'terminal' | 'universal' | 'none'>('universal');
   const [terminalFiles, setTerminalFiles] = useState<IDEFileNode[]>([]);
   const [lastManualRefresh, setLastManualRefresh] = useState<number>(Date.now());
   

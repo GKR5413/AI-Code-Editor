@@ -5,9 +5,10 @@ import FileExplorer from '@/components/FileExplorer';
 import CodeEditor from '@/components/CodeEditor';
 import ResizablePanel from '@/components/ResizablePanel';
 import { ContainerTerminal } from '@/components/ContainerTerminal';
+import { TerminalManager } from '@/components/terminal/TerminalManager';
 
 export default function Index() {
-  
+
 
   return (
     <div className="h-screen flex flex-col bg-md-surface">
@@ -52,6 +53,9 @@ export default function Index() {
           <AIChat />
         </ResizablePanel>
       </div>
+
+      {/* Agentic Terminal System - Auto-spawns when agents need terminal access */}
+      <TerminalManager />
     </div>
   );
 }

@@ -26,7 +26,7 @@ class TerminalService {
   createSession(call, callback) {
     try {
       const { session_id, shell, working_directory, environment, cols, rows } = call.request;
-      
+
       if (terminalSessions.has(session_id)) {
         return callback(null, {
           success: false,
@@ -41,7 +41,7 @@ class TerminalService {
       const rowsNum = rows || 30;
 
       console.log(`🤖 Creating new gRPC terminal session: ${session_id}`);
-      
+
       // Use child_process.spawn instead of node-pty
       const childProcess = spawn(shellCmd, [], {
         cwd: workingDir,
@@ -52,7 +52,8 @@ class TerminalService {
           COLORTERM: 'truecolor',
           AI_SESSION: 'true',
           COLUMNS: colsNum.toString(),
-          LINES: rowsNum.toString()
+          LINES: rowsNum.toString(),
+          BASH_SILENCE_DEPRECATION_WARNING: '1'
         },
         stdio: ['pipe', 'pipe', 'pipe']
       });
@@ -68,12 +69,12 @@ class TerminalService {
           data: data.toString(),
           type: 'stdout'
         });
-        
+
         // Keep only last 100 output chunks to prevent memory issues
         if (buffer.length > 100) {
           buffer.shift();
         }
-        
+
         sessionOutputBuffers.set(session_id, buffer);
       });
 
@@ -84,11 +85,11 @@ class TerminalService {
           data: data.toString(),
           type: 'stderr'
         });
-        
+
         if (buffer.length > 100) {
           buffer.shift();
         }
-        
+
         sessionOutputBuffers.set(session_id, buffer);
       });
 
@@ -118,7 +119,7 @@ class TerminalService {
   executeCommand(call, callback) {
     try {
       const { session_id, command, working_directory, environment } = call.request;
-      
+
       if (!terminalSessions.has(session_id)) {
         return callback({
           code: 5, // NOT_FOUND
@@ -127,11 +128,11 @@ class TerminalService {
       }
 
       const childProcess = terminalSessions.get(session_id);
-      
+
       // Execute command using child_process.exec for better compatibility
       const { exec } = require('child_process');
       const workingDir = working_directory || '/workspace';
-      
+
       exec(command, {
         cwd: workingDir,
         env: {
@@ -171,7 +172,7 @@ class TerminalService {
   getOutput(call, callback) {
     try {
       const { session_id, max_lines } = call.request;
-      
+
       if (!terminalSessions.has(session_id)) {
         return callback({
           code: 5, // NOT_FOUND
@@ -181,7 +182,7 @@ class TerminalService {
 
       const buffer = sessionOutputBuffers.get(session_id) || [];
       const lines = buffer.map(chunk => chunk.data).join('').split('\n');
-      
+
       const maxLines = max_lines || 50;
       const outputLines = lines.slice(-maxLines);
 
@@ -204,7 +205,7 @@ class TerminalService {
   streamOutput(call) {
     try {
       const { session_id, follow } = call.request;
-      
+
       if (!terminalSessions.has(session_id)) {
         call.emit('error', {
           code: 5, // NOT_FOUND
@@ -214,7 +215,7 @@ class TerminalService {
       }
 
       const childProcess = terminalSessions.get(session_id);
-      
+
       // Send initial buffer
       const buffer = sessionOutputBuffers.get(session_id) || [];
       buffer.forEach(chunk => {
@@ -248,7 +249,7 @@ class TerminalService {
 
         childProcess.stdout.on('data', stdoutHandler);
         childProcess.stderr.on('data', stderrHandler);
-        
+
         // Clean up when stream ends
         call.on('cancelled', () => {
           childProcess.stdout.removeListener('data', stdoutHandler);
@@ -296,7 +297,7 @@ class TerminalService {
   killSession(call, callback) {
     try {
       const { session_id } = call.request;
-      
+
       if (!terminalSessions.has(session_id)) {
         return callback({
           code: 5, // NOT_FOUND
@@ -306,7 +307,7 @@ class TerminalService {
 
       const childProcess = terminalSessions.get(session_id);
       childProcess.kill();
-      
+
       terminalSessions.delete(session_id);
       sessionOutputBuffers.delete(session_id);
 
@@ -338,13 +339,13 @@ server.bindAsync(`0.0.0.0:${GRPC_PORT}`, grpc.ServerCredentials.createInsecure()
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n🛑 Shutting down gRPC Terminal Server...');
-  
+
   // Kill all active sessions
   for (const [sessionId, childProcess] of terminalSessions.entries()) {
     console.log(`Killing session: ${sessionId}`);
     childProcess.kill();
   }
-  
+
   server.tryShutdown(() => {
     console.log('✅ gRPC Terminal Server shutdown complete');
     process.exit(0);
@@ -353,13 +354,13 @@ process.on('SIGINT', () => {
 
 process.on('SIGTERM', () => {
   console.log('\n🛑 Received SIGTERM, shutting down gRPC Terminal Server...');
-  
+
   // Kill all active sessions
   for (const [sessionId, childProcess] of terminalSessions.entries()) {
     console.log(`Killing session: ${sessionId}`);
     childProcess.kill();
   }
-  
+
   server.tryShutdown(() => {
     console.log('✅ gRPC Terminal Server shutdown complete');
     process.exit(0);

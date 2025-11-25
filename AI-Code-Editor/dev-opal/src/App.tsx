@@ -11,6 +11,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { IDEProvider } from './contexts/IDEContext';
 import { GitHubProvider } from './contexts/GitHubContext';
 import { AuthProvider, ProtectedRoute, useAuth } from './contexts/AuthContext';
+import { TerminalProvider } from './contexts/TerminalContext';
 import './index.css';
 
 function App() {
@@ -19,29 +20,31 @@ function App() {
       <AuthProvider>
         <IDEProvider>
           <GitHubProvider>
-            <Router>
-              <Routes>
-                {/* Authentication Routes */}
-                <Route path="/auth/login" element={<LoginPage />} />
-                <Route path="/auth/register" element={<RegisterPage />} />
-                <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
-                <Route path="/auth/callback" element={<AuthCallback />} />
-                <Route path="/auth/verify" element={<VerifyOtpPage />} />
-                
-                {/* Protected IDE Routes */}
-                <Route path="/" element={
-                  <ProtectedRoute>
-                    <Index />
-                  </ProtectedRoute>
-                } />
-                
-                {/* Legacy GitHub callback */}
-                <Route path="/github/callback" element={<GitHubCallback />} />
-                
-                {/* Fallback route based on auth */}
-                <Route path="*" element={<FallbackRoute />} />
-              </Routes>
-            </Router>
+            <TerminalProvider>
+              <Router>
+                <Routes>
+                  {/* Authentication Routes */}
+                  <Route path="/auth/login" element={<LoginPage />} />
+                  <Route path="/auth/register" element={<RegisterPage />} />
+                  <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
+                  <Route path="/auth/callback" element={<AuthCallback />} />
+                  <Route path="/auth/verify" element={<VerifyOtpPage />} />
+
+                  {/* Protected IDE Routes */}
+                  <Route path="/" element={
+                    <ProtectedRoute>
+                      <Index />
+                    </ProtectedRoute>
+                  } />
+
+                  {/* Legacy GitHub callback */}
+                  <Route path="/github/callback" element={<GitHubCallback />} />
+
+                  {/* Fallback route based on auth */}
+                  <Route path="*" element={<FallbackRoute />} />
+                </Routes>
+              </Router>
+            </TerminalProvider>
           </GitHubProvider>
         </IDEProvider>
       </AuthProvider>

@@ -7,10 +7,19 @@ import {
   RefreshCw,
   Settings,
   Sparkles,
-  Trash2
+  Trash2,
+  Terminal
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useAgentTerminal } from '@/hooks/useAgentTerminal';
+
+interface TerminalOutput {
+  command: string;
+  output: string;
+  exitCode?: number;
+  isRunning: boolean;
+}
 
 interface ChatMessage {
   id: string;
@@ -18,6 +27,7 @@ interface ChatMessage {
   content: string;
   timestamp: Date;
   model?: string;
+  terminalOutputs?: TerminalOutput[];
 }
 
 // Updated model definitions with latest Groq and Claude models (Nov 2025)
@@ -52,12 +62,90 @@ export const AIChat: React.FC = () => {
   const [inputValue, setInputValue] = useState('');
   const [selectedModel, setSelectedModel] = useState(models[0].value);
   const [isLoading, setIsLoading] = useState(false);
+  const [commandsDetected, setCommandsDetected] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Initialize agent terminal integration
+  const { processAgentResponse, isAutoSpawnEnabled } = useAgentTerminal({
+    agentId: `ai-chat-${selectedModel}`,
+    autoSpawn: true,
+    onCommandDetected: (commands) => {
+      console.log('🔔 Terminal commands detected:', commands);
+      setCommandsDetected(commands);
+    },
+  });
 
   // Auto-scrolling effect
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Extract commands from backticks and execute them inline
+  const executeInlineCommands = useCallback(async (message: ChatMessage) => {
+    const commandRegex = /`([^`]+)`/g;
+    const commands: string[] = [];
+    let match;
+
+    while ((match = commandRegex.exec(message.content)) !== null) {
+      commands.push(match[1]);
+    }
+
+    if (commands.length === 0) return;
+
+    // Execute each command and update the message with terminal outputs
+    const terminalOutputs: TerminalOutput[] = [];
+
+    for (const command of commands) {
+      const terminalOutput: TerminalOutput = {
+        command,
+        output: '',
+        isRunning: true,
+      };
+      terminalOutputs.push(terminalOutput);
+
+      // Update message to show running status
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === message.id ? { ...msg, terminalOutputs: [...terminalOutputs] } : msg
+        )
+      );
+
+      // Execute command via enhanced terminal server
+      try {
+        const response = await fetch('http://localhost:3001/api/terminal/compiler-execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: `inline-${message.id}`,
+            command: command,
+            timeout: 15000,
+          }),
+        });
+
+        const result = await response.json();
+        terminalOutput.output = result.output || result.error || 'No output';
+        terminalOutput.exitCode = result.exitCode;
+        terminalOutput.isRunning = false;
+
+        // Update message with command output
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === message.id ? { ...msg, terminalOutputs: [...terminalOutputs] } : msg
+          )
+        );
+      } catch (error) {
+        terminalOutput.output = `Error: ${error}`;
+        terminalOutput.isRunning = false;
+        terminalOutput.exitCode = 1;
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === message.id ? { ...msg, terminalOutputs: [...terminalOutputs] } : msg
+          )
+        );
+      }
+    }
+  }, []);
 
   const sendMessage = useCallback(async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -80,6 +168,30 @@ export const AIChat: React.FC = () => {
       const currentModel = models.find(m => m.value === selectedModel);
       const provider = currentModel?.provider || 'groq';
 
+      // Build conversation history including terminal outputs for agentic behavior
+      const conversationHistory = messages.map(msg => {
+        let content = msg.content;
+
+        // Include terminal outputs in the message content for AI to see results
+        if (msg.terminalOutputs && msg.terminalOutputs.length > 0) {
+          content += '\n\n[Terminal Execution Results]:';
+          msg.terminalOutputs.forEach((term, idx) => {
+            content += `\n\nCommand #${idx + 1}: ${term.command}`;
+            if (term.output) {
+              content += `\nOutput:\n${term.output}`;
+            }
+            if (term.exitCode !== undefined) {
+              content += `\nExit Code: ${term.exitCode} ${term.exitCode === 0 ? '(Success)' : '(Failed)'}`;
+            }
+          });
+        }
+
+        return {
+          role: msg.type === 'user' ? 'user' : 'assistant',
+          content: content
+        };
+      });
+
       // Direct connection to agent service
       const response = await fetch('/api/agent-proxy', {
         method: 'POST',
@@ -90,10 +202,7 @@ export const AIChat: React.FC = () => {
           provider: provider,
           model: selectedModel,
           messages: [
-            ...messages.map(msg => ({
-              role: msg.type === 'user' ? 'user' : 'assistant',
-              content: msg.content
-            })),
+            ...conversationHistory,
             { role: 'user', content: inputValue }
           ]
         }),
@@ -117,6 +226,9 @@ export const AIChat: React.FC = () => {
 
       setMessages((prev) => [...prev, aiResponse]);
 
+      // Extract and execute commands inline
+      await executeInlineCommands(aiResponse);
+
     } catch (error) {
       console.error("Failed to send message to agent:", error);
       const errorResponse: ChatMessage = {
@@ -130,7 +242,7 @@ export const AIChat: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [inputValue, isLoading, selectedModel]);
+  }, [inputValue, isLoading, selectedModel, messages, processAgentResponse]);
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -179,6 +291,30 @@ export const AIChat: React.FC = () => {
             {message.type === 'ai' && <Bot className="w-5 h-5 mt-1 flex-shrink-0" />}
             <div className={`message-content rounded-lg px-3 py-2 max-w-lg ${message.type === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600'}`}>
               <p className="text-sm whitespace-pre-wrap break-words font-medium">{message.content}</p>
+
+              {/* Terminal outputs inline */}
+              {message.terminalOutputs && message.terminalOutputs.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {message.terminalOutputs.map((terminal, idx) => (
+                    <div key={idx} className="bg-black text-green-400 p-2 rounded font-mono text-xs">
+                      <div className="flex items-center gap-2 mb-1 text-gray-400">
+                        <Terminal className="w-3 h-3" />
+                        <span>$ {terminal.command}</span>
+                        {terminal.isRunning && <span className="animate-pulse">Running...</span>}
+                      </div>
+                      {terminal.output && (
+                        <pre className="whitespace-pre-wrap text-xs overflow-x-auto">{terminal.output}</pre>
+                      )}
+                      {!terminal.isRunning && terminal.exitCode !== undefined && (
+                        <div className={`text-xs mt-1 ${terminal.exitCode === 0 ? 'text-green-500' : 'text-red-500'}`}>
+                          Exit code: {terminal.exitCode}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="message-actions text-xs mt-1 opacity-80 flex items-center gap-2">
                 <span>{message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                 {message.model && <span className='font-semibold'>{message.model}</span>}

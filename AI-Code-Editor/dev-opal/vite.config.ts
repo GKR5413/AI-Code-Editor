@@ -10,7 +10,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api/agent-proxy': {
-        target: 'http://agent:6000',
+        target: 'http://localhost:6000',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/agent-proxy/, '/api/agent')
       }
